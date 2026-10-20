@@ -1,0 +1,413 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "GBC Store Catalog Sorting & AI Normalization Instructions",
+  "description": "Authoritative machine-readable and LLM-executable specification for sorting, grouping, and normalizing digital game cards, gift cards, and subscriptions in the store catalog Excel file.",
+  "version": "2.0.0",
+  "last_updated": "2026-10-20",
+
+  "system_instruction_for_ai": "You are an expert E-Commerce Product Catalog AI Specialist. When given the raw product catalog spreadsheet (or rows) alongside this JSON specification, your goal is to sort, group, and normalize each product entry according to these strict business laws. You must never create duplicate product cards for multi-country brands, and you must never combine different subscription plans/tiers into a single product card when there are no country variations.",
+
+  "core_business_laws": {
+    "law_1_multi_country_master_consolidation": {
+      "name": "The Multi-Country Master Product Law",
+      "rule": "When a brand offers products across multiple countries or regional currencies (e.g. Bilibili ID/MY/TH/PH, Tinder US/UK/TR, PUBG Mobile Global/TR), ALL regional variations MUST be merged into a SINGLE Master Product row.",
+      "is_master_product": "Yes",
+      "product_name_format": "{Clean Brand Name}",
+      "storefront_behavior": "The storefront displays ONE product card with a Country dropdown selector. Selecting a country dynamically reveals that country's packages and prices.",
+      "forbidden": "DO NOT create separate product cards like 'Bilibili (Philippines)' and 'Bilibili (Indonesia)'. All regional variants must share the exact same 'Product Name' = 'Bilibili'."
+    },
+
+    "law_2_single_region_plan_separation": {
+      "name": "The Single-Region Distinct Plan Separation Law",
+      "rule": "When a brand or service does NOT have country variations (e.g. Global/Single Region), multiple package types/tiers (e.g. New vs Renewal, Basic vs Pro vs Premier, Nitro vs Basic) MUST NOT be merged onto a single product page. Each distinct plan kind/tier MUST be an INDEPENDENT product card.",
+      "is_master_product": "No",
+      "product_name_format": "{Brand} - {Plan Tier / Kind}",
+      "storefront_behavior": "Each plan tier appears as its own clean product card on the storefront (e.g. 'Suno AI - Premier' and 'Suno AI - Renewal Premier').",
+      "allowed_variations_for_single_region": "A single-region product may ONLY contain multiple variation rows if they represent duration periods (e.g. 1 Month, 3 Months, 1 Year), denomination tiers ($10, $25, $50), or tax variations (Standard vs With 27% VAT) of the EXACT SAME plan tier."
+    },
+
+    "law_3_distinct_editions_and_platforms": {
+      "name": "The Distinct Edition & Platform Independence Law",
+      "rule": "Products that represent different hardware platforms (PC vs Console), distinct in-game currencies (Gold vs Diamonds), or separate tokens MUST NOT be consolidated into master products.",
+      "is_master_product": "No",
+      "product_name_format": "{Brand} {Platform / Edition / Currency}",
+      "examples": [
+        "Apex Legends (PC)",
+        "Apex Legends (Console)",
+        "Yalla Ludo (Diamonds)",
+        "Yalla Ludo (Gold Coins)",
+        "EA Sports FC (Points)",
+        "EA Sports FC (Coins)"
+      ]
+    },
+
+    "law_4_title_sanitization": {
+      "name": "The Product Title Sanitization Law",
+      "rule": "Strip vendor prefixes, category wrappers, internal duplicate tags, and raw country parentheticals from Product Names.",
+      "prefixes_to_strip": [
+        "Payment cards for services (",
+        "Activation codes (",
+        "Gift Cards (",
+        "Digital Codes (",
+        "Direct Top-Up (",
+        "Top-Up ("
+      ],
+      "tags_to_strip": [
+        "#2",
+        "#3",
+        "[Instant Delivery]",
+        "(Key)",
+        "(Code)",
+        "(Global)"
+      ]
+    }
+  },
+
+  "excel_column_definitions": {
+    "Category": {
+      "type": "string",
+      "description": "Standard store canonical category.",
+      "allowed_values": [
+        "Gaming Cards",
+        "Gift Cards",
+        "Subscriptions",
+        "Software & Tools",
+        "Telecom & eSIM"
+      ]
+    },
+    "Brand": {
+      "type": "string",
+      "description": "Canonical brand name (e.g. 'Bilibili', 'Suno AI', 'Discord', 'Tinder', 'Steam')."
+    },
+    "Product Name": {
+      "type": "string",
+      "description": "Public product title displayed on the storefront. Must be clean without vendor wrappers."
+    },
+    "Is Master Product": {
+      "type": "string",
+      "enum": ["Yes", "No"],
+      "description": "'Yes' for multi-country regional products; 'No' for distinct plans, editions, or single-region cards."
+    },
+    "Country Name": {
+      "type": "string",
+      "description": "Full standardized country name (e.g. 'Indonesia', 'Philippines', 'United States', 'Global')."
+    },
+    "Country Code": {
+      "type": "string",
+      "description": "2-letter ISO 3166-1 alpha-2 country code (e.g. 'ID', 'PH', 'US', 'GL')."
+    },
+    "Variation Name": {
+      "type": "string",
+      "description": "Clean package or package-tier label (e.g. '7 Days Premium', '1 Month', '$25 USD', 'Standard', 'With 27% VAT')."
+    },
+    "Wholesale Cost (USD)": {
+      "type": "number",
+      "description": "Raw provider API cost in USD."
+    },
+    "Retail Price (USD)": {
+      "type": "number",
+      "description": "Final customer price with store markup applied (e.g. cost * 1.07 rounded to 2 decimals)."
+    },
+    "Stock": {
+      "type": "integer",
+      "description": "Available stock quantity (typically 999999 for instant digital items)."
+    },
+    "SKU": {
+      "type": "string",
+      "description": "Unique variation SKU code (e.g. 'FR-XXXXXXXX')."
+    },
+    "Provider Slug": {
+      "type": "string",
+      "description": "Identity of provider (e.g. 'foxreload')."
+    },
+    "External Item ID": {
+      "type": "string",
+      "description": "Provider's unique product/item ID for API order execution."
+    },
+    "External Category ID": {
+      "type": "string",
+      "description": "Provider's category UUID."
+    }
+  },
+
+  "curated_taxonomies": {
+    "multi_country_master_brands": [
+      {
+        "brand": "bilibili",
+        "clean_product_name": "Bilibili",
+        "category": "Subscriptions",
+        "is_master": "Yes",
+        "supported_countries": ["Indonesia", "Malaysia", "Thailand", "Philippines"]
+      },
+      {
+        "brand": "tinder",
+        "clean_product_name": "Tinder",
+        "category": "Subscriptions",
+        "is_master": "Yes",
+        "supported_countries": ["United States", "United Kingdom", "Turkey", "Germany", "France", "Brazil", "Global"]
+      },
+      {
+        "brand": "pubg mobile",
+        "clean_product_name": "PUBG Mobile",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Turkey", "United States", "Middle East"]
+      },
+      {
+        "brand": "free fire",
+        "clean_product_name": "Free Fire",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Middle East", "Indonesia", "Brazil"]
+      },
+      {
+        "brand": "mobile legends",
+        "clean_product_name": "Mobile Legends",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Indonesia", "Philippines", "Malaysia", "Brazil"]
+      },
+      {
+        "brand": "valorant",
+        "clean_product_name": "Valorant",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["North America", "Europe", "Turkey", "Asia-Pacific"]
+      },
+      {
+        "brand": "apex legends",
+        "clean_product_name": "Apex Legends",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "United States", "Europe"]
+      },
+      {
+        "brand": "brawl stars",
+        "clean_product_name": "Brawl Stars",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "United States", "Europe"]
+      },
+      {
+        "brand": "clash of clans",
+        "clean_product_name": "Clash of Clans",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "United States", "Europe"]
+      },
+      {
+        "brand": "clash royale",
+        "clean_product_name": "Clash Royale",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "United States", "Europe"]
+      },
+      {
+        "brand": "call of duty",
+        "clean_product_name": "Call of Duty",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "United States", "Europe"]
+      },
+      {
+        "brand": "arena of valor",
+        "clean_product_name": "Arena of Valor",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Southeast Asia"]
+      },
+      {
+        "brand": "honor of kings",
+        "clean_product_name": "Honor of Kings",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Middle East", "Southeast Asia"]
+      },
+      {
+        "brand": "bigo",
+        "clean_product_name": "Bigo Live",
+        "category": "Subscriptions",
+        "is_master": "Yes",
+        "supported_countries": ["Global", "Middle East", "United States"]
+      },
+      {
+        "brand": "garena",
+        "clean_product_name": "Garena Shells",
+        "category": "Gaming Cards",
+        "is_master": "Yes",
+        "supported_countries": ["Malaysia", "Singapore", "Thailand", "Philippines", "Indonesia"]
+      }
+    ],
+
+    "service_subscription_plan_splitting_rules": {
+      "description": "Rules for splitting single-region / global AI & digital services into distinct product cards per plan kind/tier.",
+      "brands": [
+        "suno ai",
+        "perplexity",
+        "chatgpt",
+        "claude",
+        "midjourney",
+        "otter.ai",
+        "elevenlabs",
+        "canva",
+        "cursor",
+        "discord"
+      ],
+      "plan_tier_detection_patterns": [
+        {
+          "pattern": "\\b(renewal)\\b.*\\b(premier|pro|plus|ultra|business|team|enterprise)\\b",
+          "extract_plan": "Renewal {tier}",
+          "example_raw": "Renewal Suno AI Premier (incl. 27% VAT)",
+          "output_product_name": "Suno AI - Renewal Premier",
+          "output_variation": "With 27% VAT"
+        },
+        {
+          "pattern": "\\b(premier|pro|plus|ultra|business|team|enterprise)\\b",
+          "extract_plan": "{tier}",
+          "example_raw": "Suno AI Premier",
+          "output_product_name": "Suno AI - Premier",
+          "output_variation": "Standard"
+        },
+        {
+          "pattern": "\\b(nitro basic)\\b",
+          "extract_plan": "Nitro Basic",
+          "output_product_name": "Discord - Nitro Basic"
+        },
+        {
+          "pattern": "\\b(nitro)\\b(?!\\s*basic)",
+          "extract_plan": "Nitro",
+          "output_product_name": "Discord - Nitro"
+        },
+        {
+          "pattern": "\\b(server boost)\\b",
+          "extract_plan": "Server Boost",
+          "output_product_name": "Discord - Server Boost"
+        }
+      ],
+      "vat_tax_variation_handling": {
+        "with_vat": {
+          "regex": "\\(incl\\.?\\s*27%\\s*vat\\)",
+          "variation_label": "With 27% VAT"
+        },
+        "without_vat": {
+          "regex": "standard|excl",
+          "variation_label": "Standard"
+        }
+      }
+    },
+
+    "distinct_edition_brands": [
+      "apex legends (pc)",
+      "apex legends (console)",
+      "ea sports fc",
+      "fifa",
+      "yalla ludo (diamonds)",
+      "yalla ludo (gold)",
+      "binance (usdt)",
+      "binance (bnb)"
+    ]
+  },
+
+  "sorting_algorithm_step_by_step": [
+    "STEP 1: Read the input row (Category, Brand, Item Name, Category Name, Price, Country).",
+    "STEP 2: Detect if the Brand belongs to 'multi_country_master_brands'. If YES -> Set 'Is Master Product' = 'Yes', set 'Product Name' = Clean Brand Name, parse the specific country from item name or category label into 'Country Name' and 'Country Code', and clean the package name into 'Variation Name'. All items for this brand share this single Product Name.",
+    "STEP 3: If the Brand is NOT a multi-country brand, check if it has country variations across its items. If more than 1 distinct valid country is detected across the brand -> Treat as Master Product ('Is Master Product' = 'Yes').",
+    "STEP 4: If the Brand has NO country variation (it is Global or single country):",
+    "  4A: Check if the items represent distinct plan tiers, models, or types (e.g. 'Premier' vs 'Renewal Premier', 'Pro' vs 'Team', 'Nitro' vs 'Nitro Basic').",
+    "  4B: If distinct plan kinds exist -> Split them into separate products! Set 'Product Name' = '{Brand} - {Plan Kind}', set 'Is Master Product' = 'No', set 'Country Name' = 'Global', 'Country Code' = 'GL'.",
+    "  4C: The 'Variation Name' under each split product should only represent duration (e.g. '1 Month', '1 Year') or tax options ('Standard', 'With 27% VAT').",
+    "STEP 5: Sanitize all strings: strip 'Payment cards for services (', '#2', '#3', and redundant whitespace.",
+    "STEP 6: Output the normalized row."
+  ],
+
+  "concrete_transformation_examples": [
+    {
+      "scenario": "Multi-Country Brand Consolidation (Bilibili)",
+      "input_raw_rows": [
+        {
+          "Brand": "Bilibili",
+          "Item_Name": "Bilibili 7 Days Premium (Indonesia)",
+          "Category_Name": "Indonesia"
+        },
+        {
+          "Brand": "Bilibili",
+          "Item_Name": "Bilibili 1 Month Premium (Philippines)",
+          "Category_Name": "Philippines"
+        }
+      ],
+      "output_normalized_rows": [
+        {
+          "Product Name": "Bilibili",
+          "Is Master Product": "Yes",
+          "Country Name": "Indonesia",
+          "Country Code": "ID",
+          "Variation Name": "7 Days Premium"
+        },
+        {
+          "Product Name": "Bilibili",
+          "Is Master Product": "Yes",
+          "Country Name": "Philippines",
+          "Country Code": "PH",
+          "Variation Name": "1 Month Premium"
+        }
+      ],
+      "result": "Merged into 1 single Master Product card in store with an interactive Country Selector dropdown."
+    },
+    {
+      "scenario": "Single-Region Subscription Plan Splitting (Suno AI)",
+      "input_raw_rows": [
+        {
+          "Brand": "Suno AI",
+          "Item_Name": "Suno AI Premier",
+          "Price": 33.86
+        },
+        {
+          "Brand": "Suno AI",
+          "Item_Name": "Suno AI Premier (incl. 27% VAT)",
+          "Price": 43.31
+        },
+        {
+          "Brand": "Suno AI",
+          "Item_Name": "Renewal Suno AI Premier",
+          "Price": 31.50
+        },
+        {
+          "Brand": "Suno AI",
+          "Item_Name": "Renewal Suno AI Premier (incl. 27% VAT)",
+          "Price": 40.95
+        }
+      ],
+      "output_normalized_rows": [
+        {
+          "Product Name": "Suno AI - Premier",
+          "Is Master Product": "No",
+          "Country Name": "Global",
+          "Country Code": "GL",
+          "Variation Name": "Standard"
+        },
+        {
+          "Product Name": "Suno AI - Premier",
+          "Is Master Product": "No",
+          "Country Name": "Global",
+          "Country Code": "GL",
+          "Variation Name": "With 27% VAT"
+        },
+        {
+          "Product Name": "Suno AI - Renewal Premier",
+          "Is Master Product": "No",
+          "Country Name": "Global",
+          "Country Code": "GL",
+          "Variation Name": "Standard"
+        },
+        {
+          "Product Name": "Suno AI - Renewal Premier",
+          "Is Master Product": "No",
+          "Country Name": "Global",
+          "Country Code": "GL",
+          "Variation Name": "With 27% VAT"
+        }
+      ],
+      "result": "Split into 2 distinct product cards ('Suno AI - Premier' and 'Suno AI - Renewal Premier') preventing package clutter on single pages without country variations."
+    }
+  ]
+}

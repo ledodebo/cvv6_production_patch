@@ -262,6 +262,7 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'middleware' => ['admin', '
             Route::post('customer-return-amount', 'orderReturnAmountToCustomer')->name('customer-return-amount');
             Route::post('customer-due-amount', 'orderDueAmountSwitchToCOD')->name('customer-due-amount');
             Route::post('customer-due-amount-mark-as-paid', 'orderDueAmountMarkAsPaid')->name('customer-due-amount-mark-as-paid');
+            Route::get('retry-digital-fulfillment/{id}', 'retryDigitalFulfillment')->name('retry-digital-fulfillment');
         });
 
         Route::controller(OrderEditController::class)->group(function () {

@@ -1203,4 +1203,5 @@
 @push('script')
     <script src="{{ theme_asset(path: 'public/assets/front-end/js/spartan-multi-image-picker.js') }}"></script>
     <script src="{{ theme_asset(path: 'public/assets/front-end/js/payment.js') }}"></script>
+    @include('web-views.partials._digital-card-reveal-script')
 @endpush

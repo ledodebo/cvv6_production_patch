@@ -414,4 +414,5 @@
         }
     });
 </script>
+@include('web-views.partials._digital-card-reveal-script')
 @endpush

@@ -3024,7 +3024,14 @@ document.addEventListener("keydown", function (event) {
 // ==========================================
 // Digital Card Voucher Security & Reveal Flow
 // ==========================================
-const digitalCardCodeMemoryCache = {};
+window.digitalCardCodeMemoryCache = window.digitalCardCodeMemoryCache || {};
+
+function getDigitalCsrfToken() {
+    return $('meta[name="_token"]').attr('content') ||
+           $('meta[name="csrf-token"]').attr('content') ||
+           $('input[name="_token"]').val() ||
+           '';
+}
 
 function revealDigitalCardCode(btnElement, codeId, revealUrl) {
     const $btn = $(btnElement);
@@ -3045,8 +3052,8 @@ function revealDigitalCardCode(btnElement, codeId, revealUrl) {
     }
 
     // Check memory cache first (prevents duplicate network calls)
-    if (digitalCardCodeMemoryCache[codeId]) {
-        const cached = digitalCardCodeMemoryCache[codeId];
+    if (window.digitalCardCodeMemoryCache[codeId]) {
+        const cached = window.digitalCardCodeMemoryCache[codeId];
         $codeDisplay.text(cached.code);
         if ($pinDisplay.length && cached.pin) {
             $pinDisplay.text(cached.pin);
@@ -3061,13 +3068,16 @@ function revealDigitalCardCode(btnElement, codeId, revealUrl) {
     $.ajax({
         url: revealUrl,
         type: 'POST',
+        headers: {
+            'X-CSRF-TOKEN': getDigitalCsrfToken(),
+            'Accept': 'application/json'
+        },
         data: {
-            _token: $('meta[name="_token"]').attr('content'),
+            _token: getDigitalCsrfToken(),
         },
         success: function (res) {
             if (res.status === 1 && res.code) {
-                // Store strictly in JS memory variable, never exposed in DOM data attributes
-                digitalCardCodeMemoryCache[codeId] = {
+                window.digitalCardCodeMemoryCache[codeId] = {
                     code: res.code,
                     pin: res.pin || null,
                 };
@@ -3078,11 +3088,26 @@ function revealDigitalCardCode(btnElement, codeId, revealUrl) {
                 $btn.data('revealed', true);
                 $btn.html('<i class="tio-hidden me-1"></i> ' + ($btn.data('hide-text') || 'Hide'));
             } else {
-                toastr.error(res.message || 'Unable to reveal card code.');
+                const msg = res.message || 'Unable to reveal card code.';
+                if (typeof toastr !== 'undefined') {
+                    toastr.error(msg);
+                } else {
+                    alert(msg);
+                }
             }
         },
         error: function (xhr) {
-            toastr.error('Failed to reveal digital code. Please verify you are logged in.');
+            let msg = 'Failed to reveal digital code. Please verify you are logged in.';
+            if (xhr.status === 419) {
+                msg = 'Session expired. Please refresh the page.';
+            } else if (xhr.responseJSON && xhr.responseJSON.message) {
+                msg = xhr.responseJSON.message;
+            }
+            if (typeof toastr !== 'undefined') {
+                toastr.error(msg);
+            } else {
+                alert(msg);
+            }
         },
         complete: function () {
             $btn.prop('disabled', false);
@@ -3094,47 +3119,57 @@ function copyDigitalCardCode(btnElement, codeId, revealUrl) {
     const $btn = $(btnElement);
     const originalHtml = $btn.html();
 
-    function doCopy(textToCopy) {
-        if (navigator.clipboard && window.isSecureContext) {
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                showCopySuccess();
-            }).catch(() => {
-                fallbackCopy(textToCopy);
-            });
-        } else {
-            fallbackCopy(textToCopy);
-        }
-    }
-
     function showCopySuccess() {
         $btn.html('<i class="tio-checkmark-circle-outlined me-1"></i> ' + ($btn.data('copied-text') || 'Copied!'));
         $btn.addClass('btn-success').removeClass('btn-outline-primary btn-primary');
-        toastr.success('Card code copied to clipboard!');
+        if (typeof toastr !== 'undefined') {
+            toastr.success('Card code copied to clipboard!');
+        }
         setTimeout(() => {
             $btn.html(originalHtml);
             $btn.removeClass('btn-success');
         }, 2000);
     }
 
-    function fallbackCopy(text) {
-        const tempInput = document.createElement('textarea');
-        tempInput.value = text;
-        tempInput.style.position = 'fixed';
-        tempInput.style.left = '-9999px';
-        document.body.appendChild(tempInput);
-        tempInput.select();
-        try {
-            document.execCommand('copy');
-            showCopySuccess();
-        } catch (e) {
-            toastr.error('Failed to copy code.');
+    function doClipboardCopy(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+            navigator.clipboard.writeText(text).then(() => {
+                showCopySuccess();
+            }).catch(() => {
+                fallbackExecCopy(text);
+            });
+            return;
         }
-        document.body.removeChild(tempInput);
+        fallbackExecCopy(text);
+    }
+
+    function fallbackExecCopy(text) {
+        try {
+            const tempInput = document.createElement('textarea');
+            tempInput.value = text;
+            tempInput.style.position = 'fixed';
+            tempInput.style.left = '-9999px';
+            tempInput.style.top = '0';
+            tempInput.style.opacity = '0';
+            document.body.appendChild(tempInput);
+            tempInput.focus();
+            tempInput.select();
+            tempInput.setSelectionRange(0, 99999);
+            const successful = document.execCommand('copy');
+            document.body.removeChild(tempInput);
+            if (successful) {
+                showCopySuccess();
+                return;
+            }
+        } catch (e) {}
+
+        window.prompt("Press Ctrl+C to copy your card code:", text);
+        showCopySuccess();
     }
 
     // Check memory cache
-    if (digitalCardCodeMemoryCache[codeId]) {
-        doCopy(digitalCardCodeMemoryCache[codeId].code);
+    if (window.digitalCardCodeMemoryCache[codeId]) {
+        doClipboardCopy(window.digitalCardCodeMemoryCache[codeId].code);
         return;
     }
 
@@ -3143,27 +3178,47 @@ function copyDigitalCardCode(btnElement, codeId, revealUrl) {
     $.ajax({
         url: revealUrl,
         type: 'POST',
+        headers: {
+            'X-CSRF-TOKEN': getDigitalCsrfToken(),
+            'Accept': 'application/json'
+        },
         data: {
-            _token: $('meta[name="_token"]').attr('content'),
+            _token: getDigitalCsrfToken(),
         },
         success: function (res) {
             if (res.status === 1 && res.code) {
-                digitalCardCodeMemoryCache[codeId] = {
+                window.digitalCardCodeMemoryCache[codeId] = {
                     code: res.code,
                     pin: res.pin || null,
                 };
                 const $voucherCard = $btn.closest('.digital-voucher-card');
                 const $codeDisplay = $voucherCard.find('.voucher-code-display');
-                if ($codeDisplay.length && $voucherCard.find('.btn-reveal-code').data('revealed') === true) {
+                const $pinDisplay = $voucherCard.find('.voucher-pin-display');
+                const $revealBtn = $voucherCard.find('.btn-reveal-code');
+                if ($codeDisplay.length) {
                     $codeDisplay.text(res.code);
                 }
-                doCopy(res.code);
+                if ($pinDisplay.length && res.pin) {
+                    $pinDisplay.text(res.pin);
+                }
+                if ($revealBtn.length) {
+                    $revealBtn.data('revealed', true);
+                    $revealBtn.html('<i class="tio-hidden me-1"></i> ' + ($revealBtn.data('hide-text') || 'Hide'));
+                }
+                doClipboardCopy(res.code);
             } else {
-                toastr.error(res.message || 'Unable to copy card code.');
+                const msg = res.message || 'Unable to copy card code.';
+                if (typeof toastr !== 'undefined') {
+                    toastr.error(msg);
+                } else {
+                    alert(msg);
+                }
             }
         },
-        error: function () {
-            toastr.error('Failed to fetch card code for copying.');
+        error: function (xhr) {
+            let msg = 'Failed to fetch card code for copying.';
+            if (xhr.status === 419) msg = 'Session expired. Please refresh the page.';
+            if (typeof toastr !== 'undefined') toastr.error(msg);
         },
         complete: function () {
             $btn.prop('disabled', false);
@@ -3186,21 +3241,25 @@ function printDigitalVouchers() {
 
         if (!codeId || !revealUrl) return;
 
-        if (digitalCardCodeMemoryCache[codeId]) {
-            $codeDisplay.text(digitalCardCodeMemoryCache[codeId].code);
-            if ($pinDisplay.length && digitalCardCodeMemoryCache[codeId].pin) {
-                $pinDisplay.text(digitalCardCodeMemoryCache[codeId].pin);
+        if (window.digitalCardCodeMemoryCache[codeId]) {
+            $codeDisplay.text(window.digitalCardCodeMemoryCache[codeId].code);
+            if ($pinDisplay.length && window.digitalCardCodeMemoryCache[codeId].pin) {
+                $pinDisplay.text(window.digitalCardCodeMemoryCache[codeId].pin);
             }
         } else {
             const p = $.ajax({
                 url: revealUrl,
                 type: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': getDigitalCsrfToken(),
+                    'Accept': 'application/json'
+                },
                 data: {
-                    _token: $('meta[name="_token"]').attr('content'),
+                    _token: getDigitalCsrfToken(),
                 }
             }).then(function (res) {
                 if (res.status === 1 && res.code) {
-                    digitalCardCodeMemoryCache[codeId] = {
+                    window.digitalCardCodeMemoryCache[codeId] = {
                         code: res.code,
                         pin: res.pin || null,
                     };
@@ -3226,3 +3285,4 @@ function printDigitalVouchers() {
         window.print();
     }
 }
+

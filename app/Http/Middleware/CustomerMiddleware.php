@@ -1,0 +1,40 @@
+<?php
+
+namespace App\Http\Middleware;
+
+use Brian2694\Toastr\Facades\Toastr;
+use Closure;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+
+class CustomerMiddleware
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param Request $request
+     * @param Closure $next
+     * @return mixed
+     */
+    public function handle(Request $request, Closure $next): mixed
+    {
+        if (Auth::guard('customer')->check() && auth('customer')->user()->is_active) {
+            return $next($request);
+        }
+
+        if ($request->expectsJson() || $request->ajax()) {
+            return response()->json([
+                'status' => 0,
+                'message' => translate('login_first_for_next_steps')
+            ], 401);
+        }
+
+        if (Auth::guard('customer')->check()) {
+            auth()->guard('customer')->logout();
+            Toastr::warning(translate('the_account_is_suspended'));
+        } else {
+            Toastr::info(translate('login_first_for_next_steps'));
+        }
+        return redirect()->route('customer.auth.login');
+    }
+}

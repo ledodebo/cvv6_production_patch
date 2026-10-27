@@ -62,6 +62,10 @@ class OrderDetail extends Model
         'refund_started_at',
         'variant',
         'variation',
+        'foxreload_order_id',
+        'client_reference_id',
+        'fulfillment_status',
+        'fulfillment_error',
         'updated_at'
     ];
 

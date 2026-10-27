@@ -16,8 +16,8 @@ class FulfillDigitalOrderJob implements ShouldQueue
     use Dispatchable, InteractsWithQueue, Queueable, SerializesModels;
 
     public int $orderId;
-    public int $tries = 3;
-    public int $backoff = 10;
+    public int $tries = 5;
+    public int $backoff = 5;
 
     /**
      * Create a new job instance.
@@ -28,12 +28,28 @@ class FulfillDigitalOrderJob implements ShouldQueue
     }
 
     /**
-     * Execute the job.
+     * Execute the job non-blockingly.
      */
     public function handle(DigitalOrderService $service): void
     {
-        Log::info("FulfillDigitalOrderJob starting for order #{$this->orderId}");
+        $attempt = $this->attempts();
+        Log::info("FulfillDigitalOrderJob starting attempt {$attempt}/5 for order #{$this->orderId}");
+
         $result = $service->fulfillOrder($this->orderId);
+
+        // If supplier returned pending/processing, release back to queue for 5 seconds without sleeping
+        if (!$result['success'] && ($result['status'] ?? '') === 'pending') {
+            if ($attempt < 5) {
+                Log::info("Order #{$this->orderId} status is pending, releasing back to queue for 5 seconds (attempt {$attempt}/5)");
+                $this->release(5);
+                return;
+            } else {
+                Log::warning("Order #{$this->orderId} exhausted all 5 polling attempts. Marking supplier_pending_review.");
+                $service->markSupplierPendingReview($this->orderId);
+                return;
+            }
+        }
+
         Log::info("FulfillDigitalOrderJob finished for order #{$this->orderId}: " . json_encode($result));
     }
 
@@ -43,5 +59,10 @@ class FulfillDigitalOrderJob implements ShouldQueue
     public function failed(?Throwable $exception): void
     {
         Log::error("FulfillDigitalOrderJob permanently failed for order #{$this->orderId}: " . ($exception ? $exception->getMessage() : 'Unknown error'));
+        try {
+            app(DigitalOrderService::class)->markSupplierPendingReview($this->orderId);
+        } catch (\Throwable $e) {
+            //
+        }
     }
 }

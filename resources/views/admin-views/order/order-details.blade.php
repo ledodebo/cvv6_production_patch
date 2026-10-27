@@ -46,7 +46,8 @@
                                                 $fStatus = $order['fulfillment_status'];
                                                 $badgeClass = match($fStatus) {
                                                     'delivered' => 'bg-success text-white',
-                                                    'purchasing_from_supplier' => 'bg-info text-white',
+                                                    'partially_delivered' => 'bg-info text-white',
+                                                    'purchasing', 'purchasing_from_supplier' => 'bg-primary text-white',
                                                     'supplier_pending_review' => 'bg-warning text-dark',
                                                     'supplier_failed' => 'bg-danger text-white',
                                                     'refunded' => 'bg-secondary text-white',
@@ -57,7 +58,7 @@
                                                 <i class="fi fi-rr-box-alt me-1"></i> {{ translate('Fulfillment') }}: {{ str_replace('_', ' ', $fStatus) }}
                                             </span>
 
-                                            @if(in_array($fStatus, ['supplier_failed', 'supplier_pending_review']))
+                                            @if(in_array($fStatus, ['supplier_failed', 'supplier_pending_review', 'partially_delivered']))
                                                 <a href="{{ route('admin.orders.retry-digital-fulfillment', [$order['id']]) }}" class="btn btn-xs btn-outline-warning py-1 px-2">
                                                     <i class="fi fi-rr-refresh me-1"></i> {{ translate('Retry Fulfillment') }}
                                                 </a>

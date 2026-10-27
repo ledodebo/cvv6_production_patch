@@ -747,10 +747,33 @@ class WebController extends Controller
         $paymentAmount = collect($vendorWiseCartList)->sum('order_amount_with_tax');
 
         $user = Helpers::getCustomerInformation($request);
-        if ($paymentAmount > $user->wallet_balance) {
-            Toastr::warning(translate('Inefficient_balance_in_your_wallet_to_pay_for_this_order') . '!!');
+        if (!$user) {
+            return redirect()->route('customer.auth.login');
+        }
+
+        // Concurrency protection: prevent double-clicks/race condition submissions
+        $lock = \Illuminate\Support\Facades\Cache::lock("checkout:user:{$user->id}", 10);
+        if (!$lock->get()) {
+            Toastr::warning(translate('A_checkout_is_already_in_progress._Please_wait.'));
             return back();
-        } else {
+        }
+
+        try {
+            if ($paymentAmount > $user->wallet_balance) {
+                Toastr::warning(translate('Inefficient_balance_in_your_wallet_to_pay_for_this_order') . '!!');
+                return back();
+            }
+
+            // Daily spend limit protection ($500/day)
+            $dailySpend = \App\Models\Order::where('customer_id', $user->id)
+                ->where('created_at', '>=', now()->startOfDay())
+                ->where('payment_status', 'paid')
+                ->sum('order_amount');
+            if (($dailySpend + $paymentAmount) > 500) {
+                Toastr::warning(translate('Daily_purchase_limit_of_$500_exceeded.'));
+                return back();
+            }
+
             $cart_group_ids = CartManager::get_cart_group_ids(type: 'checked');
             $carts = Cart::whereHas('product', function ($query) {
                     return $query->active();
@@ -787,14 +810,16 @@ class WebController extends Controller
 
             CustomerManager::create_wallet_transaction($user->id, Convert::default($paymentAmount), 'order_place', 'order payment');
 
-            // Fulfill digital card orders via FoxReload / DigitalOrderService
+            // Dispatch digital card fulfillment via FulfillDigitalOrderJob / DigitalOrderService
             foreach ($order_ids as $order_id) {
                 try {
-                    (new \App\Services\DigitalOrderService())->fulfillOrder($order_id);
+                    \App\Jobs\FulfillDigitalOrderJob::dispatch($order_id);
                 } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error("Fulfillment error for order #{$order_id}: " . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error("Fulfillment dispatch error for order #{$order_id}: " . $e->getMessage());
                 }
             }
+        } finally {
+            $lock->release();
         }
 
         if (session()->has('payment_mode') && session('payment_mode') == 'app') {

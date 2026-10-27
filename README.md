@@ -30,6 +30,7 @@ This repository contains all modified and newly created files for:
 - `database/migrations/2026_10_26_101636_create_order_financials_table.php`
 - `database/migrations/2026_10_26_101705_add_fulfillment_fields_to_orders_table.php`
 - `database/migrations/2026_10_26_105300_add_sandbox_gateway_to_addon_settings.php`
+- `database/migrations/2026_10_27_031000_add_item_fulfillment_and_wallet_check_constraint.php`
 
 ### Models & Business Logic
 - `app/Models/Product.php`

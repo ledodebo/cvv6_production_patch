@@ -84,6 +84,12 @@ FOXRELOAD_MIN_BALANCE_USD=50
 # ==========================================
 # Set to 'false' in production to disable the $0 sandbox testing gateway
 PAYMENT_GATEWAY_SANDBOX=false
+
+# ==========================================
+# Card Vault Encryption (Optional Dedicated Key)
+# ==========================================
+# If unset, defaults to APP_KEY. Set to decouple stored cards from APP_KEY rotation.
+# CARD_VAULT_KEY=base64:...
 ```
 
 ---

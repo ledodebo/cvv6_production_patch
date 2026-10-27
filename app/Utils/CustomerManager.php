@@ -60,7 +60,7 @@ class CustomerManager
                 }
             }
 
-            $current_balance = (float)$user->wallet_balance;
+            $current_balance = (string)$user->wallet_balance;
 
             $wallet_transaction = new WalletTransaction();
             $wallet_transaction->user_id = $user->id;
@@ -91,19 +91,25 @@ class CustomerManager
                 $debit = $amount;
             }
 
-            $credit_amount = Convert::usd($credit);
-            $debit_amount = Convert::usd($debit);
+            $credit_amount = (string)Convert::usd($credit);
+            $debit_amount = (string)Convert::usd($debit);
+            $bonus_amount = (string)$add_fund_to_wallet_bonus;
 
-            // Abort debit if balance is insufficient
-            if ($debit_amount > 0 && ($current_balance - $debit_amount) < -0.00001) {
-                DB::rollback();
-                return false;
+            // High-precision wallet math with bcmath (scale 8)
+            $total_credits = bcadd($credit_amount, $bonus_amount, 8);
+            if (bccomp($debit_amount, '0', 8) > 0) {
+                // Abort debit atomically if balance is insufficient
+                if (bccomp($current_balance, $debit_amount, 8) < 0) {
+                    DB::rollback();
+                    return false;
+                }
+                $new_balance = bcsub($current_balance, $debit_amount, 8);
+            } else {
+                $new_balance = bcadd($current_balance, $total_credits, 8);
             }
 
-            $new_balance = round($current_balance + $add_fund_to_wallet_bonus + $credit_amount - $debit_amount, 4);
-
-            $wallet_transaction->credit = $credit_amount;
-            $wallet_transaction->debit = $debit_amount;
+            $wallet_transaction->credit = (float)$credit_amount;
+            $wallet_transaction->debit = (float)$debit_amount;
             $wallet_transaction->balance = $new_balance;
             $wallet_transaction->created_at = now();
             $wallet_transaction->updated_at = now();

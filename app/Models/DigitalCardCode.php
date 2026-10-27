@@ -31,11 +31,26 @@ class DigitalCardCode extends Model
     ];
 
     /**
+     * Get dedicated encrypter using CARD_VAULT_KEY or fallback to APP_KEY
+     */
+    protected static function getEncrypter(): \Illuminate\Encryption\Encrypter
+    {
+        $vaultKey = config('digital_purchase.vault_key') ?: config('app.key');
+        if (str_starts_with($vaultKey, 'base64:')) {
+            $key = base64_decode(substr($vaultKey, 7));
+        } else {
+            $key = hash('sha256', (string)$vaultKey, true);
+        }
+        $cipher = config('app.cipher', 'AES-256-CBC');
+        return new \Illuminate\Encryption\Encrypter($key, $cipher);
+    }
+
+    /**
      * Encrypt card_code on save
      */
     public function setCardCodeAttribute($value): void
     {
-        $this->attributes['card_code'] = !empty($value) ? Crypt::encryptString((string)$value) : null;
+        $this->attributes['card_code'] = !empty($value) ? static::getEncrypter()->encryptString((string)$value) : null;
     }
 
     /**
@@ -47,9 +62,13 @@ class DigitalCardCode extends Model
             return null;
         }
         try {
-            return Crypt::decryptString($value);
-        } catch (Exception $e) {
-            return $value; // Fallback in case stored as plain text
+            return static::getEncrypter()->decryptString($value);
+        } catch (\Throwable $e) {
+            try {
+                return Crypt::decryptString($value);
+            } catch (\Throwable $e2) {
+                return $value; // Fallback in case stored as plain text
+            }
         }
     }
 
@@ -58,7 +77,7 @@ class DigitalCardCode extends Model
      */
     public function setPinAttribute($value): void
     {
-        $this->attributes['pin'] = !empty($value) ? Crypt::encryptString((string)$value) : null;
+        $this->attributes['pin'] = !empty($value) ? static::getEncrypter()->encryptString((string)$value) : null;
     }
 
     /**
@@ -70,9 +89,13 @@ class DigitalCardCode extends Model
             return null;
         }
         try {
-            return Crypt::decryptString($value);
-        } catch (Exception $e) {
-            return $value;
+            return static::getEncrypter()->decryptString($value);
+        } catch (\Throwable $e) {
+            try {
+                return Crypt::decryptString($value);
+            } catch (\Throwable $e2) {
+                return $value;
+            }
         }
     }
 

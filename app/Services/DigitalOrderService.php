@@ -25,7 +25,7 @@ class DigitalOrderService
     }
 
     /**
-     * Fulfill a paid digital order
+     * Fulfill a paid digital order at the item level (order_details).
      *
      * @param int $orderId
      * @return array
@@ -39,7 +39,7 @@ class DigitalOrderService
             return ['success' => false, 'error' => 'Order not found'];
         }
 
-        // Idempotency: skip if already delivered or refunded
+        // Idempotency: skip if entirely delivered or fully refunded
         if (in_array($order->fulfillment_status, ['delivered', 'refunded'])) {
             return [
                 'success' => true,
@@ -48,88 +48,131 @@ class DigitalOrderService
             ];
         }
 
+        // Filter only order details that have an active ProductProviderMapping (protect file downloads)
+        $digitalDetails = $order->details->filter(function ($detail) {
+            return ProductProviderMapping::where('product_id', $detail->product_id)
+                ->where('is_active', 1)
+                ->exists();
+        });
+
+        if ($digitalDetails->isEmpty()) {
+            return [
+                'success' => true,
+                'status' => 'not_applicable',
+                'message' => 'No supplier-mapped digital cards in order.'
+            ];
+        }
+
         $order->update([
-            'fulfillment_status' => 'purchasing_from_supplier'
+            'fulfillment_status' => 'purchasing'
         ]);
 
-        $totalCost = 0.0;
-        $allDelivered = true;
-        $failedReason = null;
+        $totalDeliveredCost = '0.00000000';
+        $deliveredItemsCount = 0;
+        $failedItemsCount = 0;
+        $pendingItemsCount = 0;
+        $totalDigitalItems = $digitalDetails->count();
 
-        foreach ($order->details as $detail) {
+        foreach ($digitalDetails as $detail) {
+            // Skip already delivered items
+            if ($detail->fulfillment_status === 'delivered') {
+                $deliveredItemsCount++;
+                continue;
+            }
+
             $mapping = ProductProviderMapping::where('product_id', $detail->product_id)
                 ->where('is_active', 1)
                 ->first();
 
-            $costPerUnit = $mapping ? (float)$mapping->cost_price : ((float)$detail->price * 0.80);
-            $itemTotalCost = $costPerUnit * (int)$detail->qty;
-            $totalCost += $itemTotalCost;
+            $costPerUnit = $mapping ? (string)$mapping->cost_price : bcmul((string)$detail->price, '0.80', 8);
+            $itemTotalCost = bcmul($costPerUnit, (string)$detail->qty, 8);
 
-            // Step 1: In live mode, verify FoxReload balance
+            // Step 1: Pre-generate & persist deterministic client_reference_id to prevent double-buy
+            if (empty($detail->client_reference_id)) {
+                $clientRef = "ORD-{$order->id}-DET-{$detail->id}-U-1";
+                $detail->update([
+                    'client_reference_id' => $clientRef,
+                    'fulfillment_status' => 'purchasing'
+                ]);
+            } else {
+                $clientRef = $detail->client_reference_id;
+            }
+
+            // Step 2: Check balance in live mode before purchasing
             if (!$this->isMock) {
                 $usdBalance = $this->client->getUsdBalance();
-                if ($usdBalance !== null && $usdBalance < $itemTotalCost) {
-                    Log::critical("FoxReload balance insufficient ({$usdBalance} < {$itemTotalCost}) for order #{$order->id}");
-                    return $this->handleSupplierFailure($order, "Supplier balance insufficient");
+                if ($usdBalance !== null && bccomp((string)$usdBalance, $itemTotalCost, 8) < 0) {
+                    Log::critical("FoxReload balance insufficient ({$usdBalance} < {$itemTotalCost}) for order #{$order->id}, detail #{$detail->id}");
+                    $this->handleItemFailure($order, $detail, "Supplier balance insufficient");
+                    $failedItemsCount++;
+                    continue;
                 }
             }
 
-            // Step 2: Attempt procurement from FoxReload
+            // Step 3: Procure from FoxReload if external_item_id exists
             $externalItemId = $mapping?->external_item_id;
             $codes = [];
+            $foxOrderId = $detail->foxreload_order_id;
 
             if ($externalItemId) {
-                $itemsPayload = [
-                    [
-                        'itemId' => $externalItemId,
-                        'quantity' => (int)$detail->qty,
-                    ]
-                ];
+                // If order was not yet created at FoxReload, create it now with idempotency key
+                if (empty($foxOrderId)) {
+                    $itemsPayload = [
+                        [
+                            'itemId' => $externalItemId,
+                            'quantity' => (int)$detail->qty,
+                        ]
+                    ];
 
-                $idempotencyKey = "order-{$order->id}-detail-{$detail->id}";
-                $createRes = $this->client->createOrder($itemsPayload, isMock: $this->isMock, idempotencyKey: $idempotencyKey);
+                    $createRes = $this->client->createOrder($itemsPayload, isMock: $this->isMock, idempotencyKey: $clientRef);
 
-                if (!empty($createRes['success']) && !empty($createRes['data']['id'])) {
-                    $foxOrderId = $createRes['data']['id'];
-                    $order->update(['foxreload_order_id' => $foxOrderId]);
+                    if (!empty($createRes['success']) && !empty($createRes['data']['id'])) {
+                        $foxOrderId = $createRes['data']['id'];
+                        $detail->update(['foxreload_order_id' => $foxOrderId]);
+                        if (empty($order->foxreload_order_id)) {
+                            $order->update(['foxreload_order_id' => $foxOrderId]);
+                        }
+                        // Pay for order
+                        $this->client->payOrder($foxOrderId);
+                    } else {
+                        $errMsg = $createRes['error'] ?? 'FoxReload order creation failed';
+                        Log::warning("FoxReload order creation failed for detail #{$detail->id}: {$errMsg}");
+                        $this->handleItemFailure($order, $detail, $errMsg);
+                        $failedItemsCount++;
+                        continue;
+                    }
+                }
 
-                    // Trigger payment on FoxReload
-                    $this->client->payOrder($foxOrderId);
+                // Immediate 1-time check (non-blocking)
+                $statusRes = $this->client->getOrderStatus($foxOrderId);
+                $foxStatus = $statusRes['data']['status'] ?? 'pending';
 
-                    // Poll status
-                    $pollRes = $this->client->pollOrderStatus($foxOrderId, maxAttempts: 5, delaySeconds: 2);
-                    $foxStatus = $pollRes['data']['status'] ?? null;
-
-                    if ($foxStatus === 'completed') {
-                        $foxItems = $pollRes['data']['items'] ?? [];
-                        foreach ($foxItems as $fItem) {
-                            $extData = $fItem['externalData'] ?? [];
-                            if (is_array($extData)) {
-                                foreach ($extData as $codeStr) {
-                                    if (is_string($codeStr) && trim($codeStr) !== '') {
-                                        $codes[] = trim($codeStr);
-                                    }
+                if ($foxStatus === 'completed') {
+                    $foxItems = $statusRes['data']['items'] ?? [];
+                    foreach ($foxItems as $fItem) {
+                        $extData = $fItem['externalData'] ?? [];
+                        if (is_array($extData)) {
+                            foreach ($extData as $codeStr) {
+                                if (is_string($codeStr) && trim($codeStr) !== '') {
+                                    $codes[] = trim($codeStr);
                                 }
                             }
                         }
-                    } elseif (in_array($foxStatus, ['failed', 'cancelled'])) {
-                        $itemErr = $pollRes['data']['items'][0]['error'] ?? 'FoxReload order failed';
-                        Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
-                        return $this->handleSupplierFailure($order, $itemErr);
-                    } else {
-                        // Timed out or pending manual action
-                        Log::warning("FoxReload order {$foxOrderId} status is {$foxStatus}, setting supplier_pending_review");
-                        $order->update(['fulfillment_status' => 'supplier_pending_review']);
-                        return [
-                            'success' => false,
-                            'status' => 'supplier_pending_review',
-                            'message' => 'Supplier order pending confirmation'
-                        ];
                     }
+                } elseif (in_array($foxStatus, ['failed', 'cancelled'])) {
+                    $itemErr = $statusRes['data']['items'][0]['error'] ?? "FoxReload order status: {$foxStatus}";
+                    Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
+                    $this->handleItemFailure($order, $detail, $itemErr);
+                    $failedItemsCount++;
+                    continue;
+                } else {
+                    // Pending / processing: non-blocking queue poll required
+                    $pendingItemsCount++;
+                    continue;
                 }
             }
 
-            // Step 3: Mock fallback for local testing if FoxReload is mock or unconfigured
+            // Step 4: Simulated mock fallback for local testing
             if (empty($codes) && $this->isMock) {
                 Log::info("Generating simulated mock codes for order #{$order->id}, detail #{$detail->id}");
                 for ($i = 0; $i < (int)$detail->qty; $i++) {
@@ -137,7 +180,7 @@ class DigitalOrderService
                 }
             }
 
-            // Step 4: Save delivered card codes encrypted
+            // Step 5: Save delivered card codes encrypted with CARD_VAULT_KEY
             if (!empty($codes)) {
                 foreach ($codes as $code) {
                     DigitalCardCode::create([
@@ -148,83 +191,134 @@ class DigitalOrderService
                         'delivered_at' => now(),
                     ]);
                 }
+
+                $detail->update([
+                    'fulfillment_status' => 'delivered',
+                    'delivery_status' => 'delivered'
+                ]);
+
+                $totalDeliveredCost = bcadd($totalDeliveredCost, $itemTotalCost, 8);
+                $deliveredItemsCount++;
             } else {
-                $allDelivered = false;
-                $failedReason = "No codes delivered for product #{$detail->product_id}";
-                break;
+                $this->handleItemFailure($order, $detail, "No card codes delivered by supplier");
+                $failedItemsCount++;
             }
         }
 
-        if (!$allDelivered) {
-            return $this->handleSupplierFailure($order, $failedReason ?? 'Fulfillment incomplete');
+        // If any item is still pending at supplier, return pending status for queue release(5)
+        if ($pendingItemsCount > 0) {
+            $order->update(['fulfillment_status' => 'purchasing']);
+            return [
+                'success' => false,
+                'status' => 'pending',
+                'order_id' => $order->id,
+                'message' => "Order #{$order->id} has {$pendingItemsCount} item(s) pending with supplier"
+            ];
         }
 
-        // Step 5: Mark order delivered
-        $order->update([
-            'order_status' => 'delivered',
-            'fulfillment_status' => 'delivered',
-        ]);
+        // Update overall order fulfillment status
+        if ($deliveredItemsCount === $totalDigitalItems) {
+            $order->update([
+                'order_status' => 'delivered',
+                'fulfillment_status' => 'delivered',
+            ]);
+            $overallStatus = 'delivered';
+        } elseif ($deliveredItemsCount > 0 && $failedItemsCount > 0) {
+            $order->update([
+                'order_status' => 'confirmed',
+                'fulfillment_status' => 'partially_delivered',
+            ]);
+            $overallStatus = 'partially_delivered';
+        } else {
+            $order->update([
+                'order_status' => 'failed',
+                'fulfillment_status' => 'supplier_failed',
+            ]);
+            $overallStatus = 'supplier_failed';
+        }
 
-        // Step 6: Record order financials
+        // Record or update order financials
         $sellingPrice = (float)$order->order_amount;
+        $costPrice = (float)$totalDeliveredCost;
         $gatewayFee = 0.0;
-
-        // If PayPal capture response fee is available on payment request
-        $netProfit = round($sellingPrice - $totalCost - $gatewayFee, 4);
+        $netProfit = round($sellingPrice - $costPrice - $gatewayFee, 4);
 
         OrderFinancial::updateOrCreate(
             ['order_id' => $order->id],
             [
                 'selling_price' => $sellingPrice,
-                'cost_price' => $totalCost,
+                'cost_price' => $costPrice,
                 'gateway_fee' => $gatewayFee,
                 'net_profit' => $netProfit,
                 'currency' => 'USD',
             ]
         );
 
-        Log::info("Order #{$order->id} fulfilled successfully with " . count($order->digitalCardCodes) . " codes");
+        Log::info("Order #{$order->id} evaluated. Status: {$overallStatus} (Delivered: {$deliveredItemsCount}, Failed: {$failedItemsCount})");
 
         return [
-            'success' => true,
-            'status' => 'delivered',
+            'success' => ($deliveredItemsCount > 0),
+            'status' => $overallStatus,
             'order_id' => $order->id,
+            'delivered_items' => $deliveredItemsCount,
+            'failed_items' => $failedItemsCount
         ];
     }
 
     /**
-     * Handle supplier failure: mark order failed and refund to customer wallet
+     * Handle item-level failure: mark order_detail failed and auto-refund item amount to wallet
      */
-    protected function handleSupplierFailure(Order $order, string $reason): array
+    protected function handleItemFailure(Order $order, OrderDetail $detail, string $reason): void
     {
-        Log::warning("DigitalOrderService: Fulfilling order #{$order->id} failed: {$reason}. Refunding to wallet.");
+        Log::warning("Fulfillment failed for order #{$order->id}, detail #{$detail->id}: {$reason}. Auto-refunding item to wallet.");
 
-        $order->update([
-            'order_status' => 'failed',
+        $detail->update([
             'fulfillment_status' => 'supplier_failed',
-            'order_note' => "Supplier failed: {$reason}",
+            'fulfillment_error' => $reason
         ]);
 
-        // Auto-refund 100% of order_amount to user wallet
-        if ($order->customer_id && (float)$order->order_amount > 0) {
-            CustomerManager::create_wallet_transaction(
-                $order->customer_id,
-                (float)$order->order_amount,
-                'order_refund',
-                (string)$order->id,
-                ['payment_method' => 'wallet_refund']
-            );
+        // Calculate exact item amount using bcmath (scale 8): (price * qty) + tax - discount
+        $itemSubtotal = bcmul((string)$detail->price, (string)$detail->qty, 8);
+        $itemTax = (string)($detail->tax ?? 0);
+        $itemDiscount = (string)($detail->discount ?? 0);
+        $itemRefundAmount = bcsub(bcadd($itemSubtotal, $itemTax, 8), $itemDiscount, 8);
 
-            $order->update([
-                'order_status' => 'refunded',
-                'fulfillment_status' => 'refunded',
-            ]);
+        if (bccomp($itemRefundAmount, '0', 8) <= 0) {
+            $itemRefundAmount = $itemSubtotal;
         }
 
-        return [
-            'success' => false,
-            'status' => 'refunded',
-            'error' => $reason,
-        ];
+        if ($order->customer_id && bccomp($itemRefundAmount, '0', 8) > 0) {
+            CustomerManager::create_wallet_transaction(
+                $order->customer_id,
+                (float)$itemRefundAmount,
+                'order_refund',
+                "order_{$order->id}_detail_{$detail->id}",
+                ['payment_method' => 'wallet_refund']
+            );
+        }
+    }
+
+    /**
+     * Mark pending items as supplier_pending_review after queue polling timeout
+     */
+    public function markSupplierPendingReview(int $orderId): void
+    {
+        $order = Order::with('details')->find($orderId);
+        if (!$order) return;
+
+        foreach ($order->details as $detail) {
+            if ($detail->fulfillment_status === 'purchasing') {
+                $detail->update([
+                    'fulfillment_status' => 'supplier_pending_review',
+                    'fulfillment_error' => 'Supplier order polling timed out after 5 attempts'
+                ]);
+            }
+        }
+
+        $order->update([
+            'fulfillment_status' => 'supplier_pending_review'
+        ]);
+
+        Log::warning("Order #{$orderId} marked as supplier_pending_review for manual administrator inspection.");
     }
 }

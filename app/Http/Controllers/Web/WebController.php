@@ -586,6 +586,18 @@ class WebController extends Controller
 
         if (!empty($orderIds)) {
             session(['recent_order_ids' => $orderIds]);
+
+            // Ensure instant delivery even if queue worker is not running in background
+            foreach ($orderIds as $ordId) {
+                try {
+                    $pendingOrder = \App\Models\Order::find($ordId);
+                    if ($pendingOrder && in_array($pendingOrder->fulfillment_status, ['pending', 'purchasing'])) {
+                        app(\App\Services\DigitalOrderService::class)->fulfillOrder($pendingOrder->id);
+                    }
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("Immediate fulfillment on order complete view failed for #{$ordId}: " . $e->getMessage());
+                }
+            }
         }
 
         return view(VIEW_FILE_NAMES['order_complete'], [

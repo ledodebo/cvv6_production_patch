@@ -401,6 +401,15 @@ class UserProfileController extends Controller
         $order = $this->order->with(['deliveryManReview', 'customer', 'offlinePayments', 'details.productAllStatus', 'details.refundRequest', 'details.digitalCardCodes'])->where(['id' => $request['id'], 'customer_id' => auth('customer')->id(), 'is_guest' => '0'])->first();
 
         if ($order) {
+            if (in_array($order->fulfillment_status, ['pending', 'purchasing'])) {
+                try {
+                    app(\App\Services\DigitalOrderService::class)->fulfillOrder($order->id);
+                    $order->load(['details.productAllStatus', 'details.refundRequest', 'details.digitalCardCodes']);
+                } catch (\Throwable $e) {
+                    \Illuminate\Support\Facades\Log::warning("Immediate fulfillment on account details view failed: " . $e->getMessage());
+                }
+            }
+
             $offlinePaymentMethods = OfflinePaymentMethod::where('status', 1)->get();
             $offlinePaymentStatus = getWebConfig(name: 'offline_payment');
             $paymentGatewayList = payment_gateways();

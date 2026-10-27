@@ -135,40 +135,58 @@ class DigitalOrderService
                         // Pay for order
                         $this->client->payOrder($foxOrderId);
                     } else {
-                        $errMsg = $createRes['error'] ?? 'FoxReload order creation failed';
+                        $rawErr = $createRes['error'] ?? 'FoxReload order creation failed';
+                        $errMsg = is_array($rawErr) ? json_encode($rawErr) : (string)$rawErr;
                         Log::warning("FoxReload order creation failed for detail #{$detail->id}: {$errMsg}");
-                        $this->handleItemFailure($order, $detail, $errMsg);
-                        $failedItemsCount++;
-                        continue;
+
+                        if ($this->isMock) {
+                            Log::info("Mock mode: FoxReload returned ({$errMsg}), proceeding to simulated test card delivery for order #{$order->id}, detail #{$detail->id}");
+                        } else {
+                            $this->handleItemFailure($order, $detail, $errMsg);
+                            $failedItemsCount++;
+                            continue;
+                        }
                     }
                 }
 
-                // Immediate 1-time check (non-blocking)
-                $statusRes = $this->client->getOrderStatus($foxOrderId);
-                $foxStatus = $statusRes['data']['status'] ?? 'pending';
+                if (!empty($foxOrderId)) {
+                    // Immediate 1-time check (non-blocking)
+                    $statusRes = $this->client->getOrderStatus($foxOrderId);
+                    $foxStatus = $statusRes['data']['status'] ?? 'pending';
 
-                if ($foxStatus === 'completed') {
-                    $foxItems = $statusRes['data']['items'] ?? [];
-                    foreach ($foxItems as $fItem) {
-                        $extData = $fItem['externalData'] ?? [];
-                        if (is_array($extData)) {
-                            foreach ($extData as $codeStr) {
-                                if (is_string($codeStr) && trim($codeStr) !== '') {
-                                    $codes[] = trim($codeStr);
+                    if ($foxStatus === 'completed') {
+                        $foxItems = $statusRes['data']['items'] ?? [];
+                        foreach ($foxItems as $fItem) {
+                            $extData = $fItem['externalData'] ?? [];
+                            if (is_array($extData)) {
+                                foreach ($extData as $codeStr) {
+                                    if (is_string($codeStr) && trim($codeStr) !== '') {
+                                        $codes[] = trim($codeStr);
+                                    }
                                 }
                             }
                         }
+                    } elseif (in_array($foxStatus, ['failed', 'cancelled'])) {
+                        $rawItemErr = $statusRes['data']['items'][0]['error'] ?? "FoxReload order status: {$foxStatus}";
+                        $itemErr = is_array($rawItemErr) ? json_encode($rawItemErr) : (string)$rawItemErr;
+                        Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
+
+                        if ($this->isMock) {
+                            Log::info("Mock mode: FoxReload status {$foxStatus}, generating simulated codes");
+                        } else {
+                            $this->handleItemFailure($order, $detail, $itemErr);
+                            $failedItemsCount++;
+                            continue;
+                        }
+                    } else {
+                        // Pending / processing at FoxReload
+                        if ($this->isMock) {
+                            Log::info("Mock mode: FoxReload status is pending, generating immediate simulated codes");
+                        } else {
+                            $pendingItemsCount++;
+                            continue;
+                        }
                     }
-                } elseif (in_array($foxStatus, ['failed', 'cancelled'])) {
-                    $itemErr = $statusRes['data']['items'][0]['error'] ?? "FoxReload order status: {$foxStatus}";
-                    Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
-                    $this->handleItemFailure($order, $detail, $itemErr);
-                    $failedItemsCount++;
-                    continue;
-                } else {
-                    // Pending / processing: non-blocking queue poll required
-                    $pendingItemsCount++;
-                    continue;
                 }
             }
 

@@ -88,6 +88,15 @@ class DigitalProductDownloadController extends Controller
             return response()->json(['success' => false, 'message' => translate('Order not found')], 404);
         }
 
+        if (in_array($order->fulfillment_status, ['pending', 'purchasing'])) {
+            try {
+                app(\App\Services\DigitalOrderService::class)->fulfillOrder($order->id);
+                $order->load(['details.product', 'details.digitalCardCodes']);
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Immediate fulfillment on polling attempt failed for order #{$orderId}: " . $e->getMessage());
+            }
+        }
+
         $items = [];
         $totalItems = 0;
         $deliveredItems = 0;

@@ -322,77 +322,22 @@ class WebController extends Controller
         ]);
     }
 
-    public function checkout_details(Request $request)
+    public function checkout_details(Request $request): RedirectResponse
     {
-        if (
-            (!auth('customer')->check() || Cart::where(['customer_id' => auth('customer')->id()])->count() < 1)
-            && (!getWebConfig(name: 'guest_checkout') || !session()->has('guest_id') || !session('guest_id'))
-        ) {
-            Toastr::error(translate('please_login_your_account'));
-            return theme_root_path() == 'default' ? redirect('customer/auth/login') : redirect('/');
-        }
-        ProductManager::updateProductPriceInCartList(request: $request);
-
-        $response = OrderManager::checkValidationForCheckoutPages($request);
-        if ($response['status'] == 0) {
-            foreach ($response['message'] as $message) {
-                Toastr::error($message);
-            }
-            return isset($response['redirect']) ? redirect($response['redirect']) : redirect('/');
-        }
-
-        $countryRestrictStatus = getWebConfig(name: 'delivery_country_restriction');
-        $zipRestrictStatus = getWebConfig(name: 'delivery_zip_code_area_restriction');
-        $countries = $countryRestrictStatus ? $this->get_delivery_country_array() : COUNTRIES;
-        $zipCodes = $zipRestrictStatus ? DeliveryZipCode::all() : 0;
-        $billingInputByCustomer = getWebConfig(name: 'billing_input_by_customer');
-        $defaultLocation = getWebConfig(name: 'default_location');
-
-        $user = Helpers::getCustomerInformation($request);
-        $shippingAddresses = ShippingAddress::where([
-            'customer_id' => $user == 'offline' ? session('guest_id') : auth('customer')->id(),
-            'is_guest' => $user == 'offline' ? 1 : '0',
-        ])->get();
-
-        $countriesName = [];
-        $countriesCode = [];
-        foreach ($countries as $country) {
-            $countriesName[] = $country['name'];
-            $countriesCode[] = $country['code'];
-        }
-
-        return view(VIEW_FILE_NAMES['order_shipping'], [
-            'physical_product_view' => $response['physical_product_view'],
-            'zip_codes' => $zipCodes,
-            'country_restrict_status' => $countryRestrictStatus,
-            'zip_restrict_status' => $zipRestrictStatus,
-            'countries' => $countries,
-            'countriesName' => $countriesName,
-            'countriesCode' => $countriesCode,
-            'billing_input_by_customer' => $billingInputByCustomer,
-            'default_location' => $defaultLocation,
-            'shipping_addresses' => $shippingAddresses,
-            'billing_addresses' => $shippingAddresses
-        ]);
+        return redirect()->route('checkout-payment');
     }
 
     public function checkout_payment(Request $request): View|RedirectResponse
     {
-        if (!session('address_id') && !session('billing_address_id')) {
-            Toastr::error(translate('Please_update_address_information'));
-            return redirect()->route('checkout-details');
+        // Enforce customer authentication (digital cards require customer account)
+        if (!auth('customer')->check()) {
+            Toastr::warning(translate('please_login_your_account'));
+            return redirect('customer/auth/login');
         }
 
-        if (
-            !((auth('customer')->check() && Cart::where(['customer_id' => auth('customer')->id()])->count() > 0)
-            || (getWebConfig(name: 'guest_checkout') && session()->has('guest_id') && session('guest_id')))
-        ) {
-            Toastr::warning(translate('please_login_your_account'));
-            if (theme_root_path() == 'default') {
-                return redirect('customer/auth/login');
-            } else {
-                return redirect('/');
-            }
+        if (Cart::where(['customer_id' => auth('customer')->id()])->count() < 1) {
+            Toastr::warning(translate('your_cart_is_empty'));
+            return redirect()->route('home');
         }
 
         $response = OrderManager::checkValidationForCheckoutPages($request);
@@ -459,27 +404,22 @@ class WebController extends Controller
             $availablePaymentMethod = ['wallet_status'];
         }
 
-        if (session()->has('address_id') && session()->has('billing_address_id')) {
-            return view(VIEW_FILE_NAMES['payment_details'], [
-                'cashOnDeliveryBtnShow' => $cashOnDeliveryBtnShow,
-                'cash_on_delivery' => $cashOnDeliveryStatus,
-                'digital_payment' => getWebConfig(name: 'digital_payment'),
-                'wallet_status' => getWebConfig(name: 'wallet_status'),
-                'offline_payment' => $offlinePaymentStatus,
-                'coupon_discount' => $couponDiscount,
-                'amount' => $amount,
-                'inr' => $inr,
-                'usd' => $usd,
-                'myr' => $myr,
-                'paymentGatewayPublishedStatus' => $paymentGatewayPublishedStatus,
-                'payment_gateways_list' => payment_gateways(),
-                'offline_payment_methods' => $offlinePaymentMethods,
-                'activeMinimumMethods' => count($availablePaymentMethod) > 0,
-            ]);
-        }
-
-        Toastr::error(translate('incomplete_info'));
-        return back();
+        return view(VIEW_FILE_NAMES['payment_details'], [
+            'cashOnDeliveryBtnShow' => $cashOnDeliveryBtnShow,
+            'cash_on_delivery' => $cashOnDeliveryStatus,
+            'digital_payment' => getWebConfig(name: 'digital_payment'),
+            'wallet_status' => getWebConfig(name: 'wallet_status'),
+            'offline_payment' => $offlinePaymentStatus,
+            'coupon_discount' => $couponDiscount,
+            'amount' => $amount,
+            'inr' => $inr,
+            'usd' => $usd,
+            'myr' => $myr,
+            'paymentGatewayPublishedStatus' => $paymentGatewayPublishedStatus,
+            'payment_gateways_list' => payment_gateways(),
+            'offline_payment_methods' => $offlinePaymentMethods,
+            'activeMinimumMethods' => count($availablePaymentMethod) > 0,
+        ]);
     }
 
     public function getCashOnDeliveryCheckoutComplete(Request $request): View|RedirectResponse|JsonResponse
@@ -617,7 +557,36 @@ class WebController extends Controller
         session()->forget('newCustomerRegister');
         session()->forget('newRegisterCustomerInfo');
 
-        $orderIds = json_decode($request['orderIds'] ?? '', true);
+        $rawOrderIds = $request['orderIds'] ?? null;
+        $orderIds = [];
+
+        if (is_array($rawOrderIds)) {
+            $orderIds = $rawOrderIds;
+        } elseif (is_string($rawOrderIds) && !empty($rawOrderIds)) {
+            $decoded = json_decode($rawOrderIds, true);
+            if (is_array($decoded)) {
+                $orderIds = $decoded;
+            } elseif (is_numeric($decoded)) {
+                $orderIds = [(int)$decoded];
+            } else {
+                // Comma-separated fallback
+                $orderIds = array_filter(array_map('trim', explode(',', $rawOrderIds)), 'is_numeric');
+                $orderIds = array_map('intval', $orderIds);
+            }
+        } elseif (is_numeric($rawOrderIds)) {
+            $orderIds = [(int)$rawOrderIds];
+        }
+
+        // Resilient session fallback if query param missing or altered
+        if (empty($orderIds) && session()->has('recent_order_ids')) {
+            $orderIds = (array) session('recent_order_ids');
+        } elseif (empty($orderIds) && session()->has('order_success_ids')) {
+            $orderIds = (array) session('order_success_ids');
+        }
+
+        if (!empty($orderIds)) {
+            session(['recent_order_ids' => $orderIds]);
+        }
 
         return view(VIEW_FILE_NAMES['order_complete'], [
             'order_ids' => $orderIds,
@@ -727,11 +696,6 @@ class WebController extends Controller
 
     public function checkout_complete_wallet(Request $request): View|RedirectResponse
     {
-        if (!session('address_id') && !session('billing_address_id')) {
-            Toastr::error(translate('Please_update_address_information'));
-            return redirect()->route('checkout-details');
-        }
-
         $response = OrderManager::checkValidationForCheckoutPages($request);
         if ($response['status'] == 0) {
             foreach ($response['message'] as $message) {
@@ -827,13 +791,10 @@ class WebController extends Controller
         }
 
         $isNewCustomerInSession = session('newCustomerRegister');
-        session(['order_success_ids' => $order_ids, 'isNewCustomerInSession' => $isNewCustomerInSession]);
+        session(['order_success_ids' => $order_ids, 'recent_order_ids' => $order_ids, 'isNewCustomerInSession' => $isNewCustomerInSession]);
         session()->forget('newCustomerRegister');
         session()->forget('coupon_discount');
-        if(auth()->guard('customer')->check()) {
-            return redirect()->route('account-oder');
-        }
-        return redirect()->route('home');
+        return redirect()->route('order-placed-success', ['orderIds' => json_encode($order_ids)]);
     }
 
     public function order_placed(): View

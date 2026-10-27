@@ -997,10 +997,14 @@ class OrderManager
             'bring_change_amount' => $orderData['payment_method'] == 'cash_on_delivery' ? $orderData['bring_change_amount'] ?? 0 : null,
             'bring_change_amount_currency' => $orderData['bring_change_amount_currency'] ?? null,
             'admin_commission' => $adminCommission,
-            'shipping_address' => $cartData['shipping_address_id'],
-            'shipping_address_data' => ShippingAddress::find($cartData['shipping_address_id']),
-            'billing_address' => getWebConfig('billing_input_by_customer') ? $cartData['billing_address_id'] : null,
-            'billing_address_data' => getWebConfig('billing_input_by_customer') ? ShippingAddress::find($cartData['billing_address_id']) : null,
+            'shipping_address' => $cartData['shipping_address_id'] ?? 0,
+            'shipping_address_data' => !empty($cartData['shipping_address_id']) 
+                ? (ShippingAddress::find($cartData['shipping_address_id']) ?? self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)) 
+                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null),
+            'billing_address' => getWebConfig('billing_input_by_customer') ? ($cartData['billing_address_id'] ?? 0) : null,
+            'billing_address_data' => (!empty($cartData['billing_address_id']) && getWebConfig('billing_input_by_customer')) 
+                ? (ShippingAddress::find($cartData['billing_address_id']) ?? self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)) 
+                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null),
             'shipping_responsibility' => getWebConfig(name: 'shipping_method'),
             'shipping_cost' => $cartData['shipping_cost'],
             'extra_discount' => $cartData['free_delivery_discount'],
@@ -2547,5 +2551,27 @@ class OrderManager
                 event(new OrderEditDuePaymentEvent(notification: $orderEditDuePaymentEvent['notificationData']));
             }
         }
+    }
+
+    /**
+     * Synthesize virtual digital address object for digital orders
+     */
+    public static function getVirtualDigitalAddress(?int $customerId = null): object
+    {
+        $customer = $customerId ? User::find($customerId) : auth('customer')->user();
+        return (object) [
+            'id' => 0,
+            'customer_id' => $customer?->id ?? 0,
+            'contact_person_name' => trim(($customer?->f_name ?? '') . ' ' . ($customer?->l_name ?? '')) ?: 'Valued Customer',
+            'address_type' => 'digital',
+            'address' => 'Digital Delivery',
+            'city' => 'Digital',
+            'zip' => '00000',
+            'country' => 'Global',
+            'phone' => $customer?->phone ?? 'N/A',
+            'email' => $customer?->email ?? '',
+            'created_at' => now(),
+            'updated_at' => now(),
+        ];
     }
 }

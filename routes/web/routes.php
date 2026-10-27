@@ -258,6 +258,7 @@ Route::group(['namespace' => 'Web', 'middleware' => ['maintenance_mode', 'guestC
 
     Route::controller(DigitalProductDownloadController::class)->group(function () {
         Route::get('account-order-digital-codes/{id}', 'getDigitalCardCodes')->name('account-order-digital-codes')->middleware('customer');
+        Route::post('account-order-digital-codes/{codeId}/reveal', 'revealCardCode')->name('account-order-digital-codes.reveal')->middleware('customer');
         Route::group(['prefix' => 'digital-product-download-pos', 'as' => 'digital-product-download-pos.'], function () {
             Route::get('/', 'index')->name('index');
         });

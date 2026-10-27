@@ -784,7 +784,8 @@ class WebController extends Controller
                 OrderManager::generateReferBonusForFirstOrder(orderId: $order_id);
             }
 
-            CustomerManager::create_wallet_transaction($user->id, Convert::default($paymentAmount), 'order_place', 'order payment');
+            $walletReference = !empty($order_ids) ? 'order_' . implode('_', $order_ids) : 'order payment';
+            CustomerManager::create_wallet_transaction($user->id, Convert::default($paymentAmount), 'order_place', $walletReference);
 
             // Dispatch digital card fulfillment via FulfillDigitalOrderJob / DigitalOrderService
             foreach ($order_ids as $order_id) {

@@ -48,8 +48,8 @@ class CustomerManager
                 return false;
             }
 
-            // Idempotency check for order_place: prevent duplicate debits for the same order reference
-            if ($transaction_type === 'order_place' && !empty($reference)) {
+            // Idempotency check for order_place: prevent duplicate debits for the specific unique order reference
+            if ($transaction_type === 'order_place' && !empty($reference) && !in_array($reference, ['order payment', 'order_place', 'order_payment'])) {
                 $existing = WalletTransaction::where('user_id', $user_id)
                     ->where('transaction_type', 'order_place')
                     ->where('reference', (string)$reference)

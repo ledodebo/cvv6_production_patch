@@ -3,7 +3,7 @@
 @section('title', translate('order_Details'))
 
 @section('content')
-    @php($shippingAddress = $order['shipping_address_data'] ?? null)
+    <?php $shippingAddress = $order['shipping_address_data'] ?? null; ?>
     <div class="content container-fluid">
         <div class="d-flex justify-content-between align-items-center gap-3 mb-3">
             <h2 class="fs-20 mb-0 text-capitalize d-flex align-items-center gap-2">

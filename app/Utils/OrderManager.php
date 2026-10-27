@@ -998,13 +998,13 @@ class OrderManager
             'bring_change_amount_currency' => $orderData['bring_change_amount_currency'] ?? null,
             'admin_commission' => $adminCommission,
             'shipping_address' => $cartData['shipping_address_id'] ?? 0,
-            'shipping_address_data' => !empty($cartData['shipping_address_id']) 
+            'shipping_address_data' => json_encode(!empty($cartData['shipping_address_id']) 
                 ? (ShippingAddress::find($cartData['shipping_address_id']) ?? self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)) 
-                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null),
+                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)),
             'billing_address' => getWebConfig('billing_input_by_customer') ? ($cartData['billing_address_id'] ?? 0) : null,
-            'billing_address_data' => (!empty($cartData['billing_address_id']) && getWebConfig('billing_input_by_customer')) 
+            'billing_address_data' => json_encode((!empty($cartData['billing_address_id']) && getWebConfig('billing_input_by_customer')) 
                 ? (ShippingAddress::find($cartData['billing_address_id']) ?? self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)) 
-                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null),
+                : self::getVirtualDigitalAddress($orderData['customer_id'] ?? null)),
             'shipping_responsibility' => getWebConfig(name: 'shipping_method'),
             'shipping_cost' => $cartData['shipping_cost'],
             'extra_discount' => $cartData['free_delivery_discount'],

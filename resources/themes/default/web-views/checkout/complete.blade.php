@@ -168,7 +168,7 @@
                     <div class="px-3 py-1 bg-light rounded text-start">
                         <small class="text-muted d-block">{{ translate('Total_Amount') }}</small>
                         <span class="fw-bold text-success">
-                            {{ \App\Utils\Helpers::currency_converter($orders->sum('order_amount')) }}
+                            {{ webCurrencyConverter($orders->sum('order_amount')) }}
                         </span>
                     </div>
                 </div>

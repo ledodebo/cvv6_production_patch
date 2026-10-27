@@ -330,9 +330,6 @@
                                         $colClass = ($hasShipping && $hasBilling) ? 'col-md-6 col-sm-6' : 'col-md-12 col-sm-12';
                                         ?>
 
-
-                                    @php($shipping = $order['shipping_address_data'] ?? null)
-
                                     @if($hasShipping && !empty((array) $shipping))
                                         <div class="{{ $colClass }}">
                                             <div class="light-box rounded-8 p--20 h-100">
@@ -424,7 +421,7 @@
                                     <tbody>
                                     <?php $orderDetailsIndex = 1; ?>
                                     @foreach ($order->details as $key => $detail)
-                                        @php($product = $detail?->productAllStatus ?? json_decode($detail->product_details, true))
+                                        <?php $product = $detail?->productAllStatus ?? json_decode($detail->product_details, true); ?>
                                         @if($product)
                                             <tr>
                                                 <td class="align-middle">

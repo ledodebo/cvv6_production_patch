@@ -192,20 +192,29 @@ class DigitalOrderService
                 }
 
                 if (!empty($foxOrderId)) {
-                    // Check order status at FoxReload
-                    $statusRes = $this->client->getOrderStatus($foxOrderId);
-                    $foxStatus = $statusRes['data']['status'] ?? 'pending';
-                    $foxItems = $statusRes['data']['items'] ?? [];
+                    // Poll FoxReload up to 3 times (1.5s delay) so codes are captured immediately
+                    for ($attempt = 1; $attempt <= 3; $attempt++) {
+                        $statusRes = $this->client->getOrderStatus($foxOrderId);
+                        $foxStatus = $statusRes['data']['status'] ?? 'pending';
+                        $foxItems = $statusRes['data']['items'] ?? [];
 
-                    // Extract codes if present in any item externalData
-                    foreach ($foxItems as $fItem) {
-                        $extData = $fItem['externalData'] ?? [];
-                        if (is_array($extData)) {
-                            foreach ($extData as $codeStr) {
-                                if (is_string($codeStr) && trim($codeStr) !== '') {
-                                    $codes[] = trim($codeStr);
+                        foreach ($foxItems as $fItem) {
+                            $extData = $fItem['externalData'] ?? [];
+                            if (is_array($extData)) {
+                                foreach ($extData as $codeStr) {
+                                    if (is_string($codeStr) && trim($codeStr) !== '' && !in_array(trim($codeStr), $codes)) {
+                                        $codes[] = trim($codeStr);
+                                    }
                                 }
                             }
+                        }
+
+                        if (!empty($codes) || in_array($foxStatus, ['failed', 'cancelled'])) {
+                            break;
+                        }
+
+                        if ($attempt < 3) {
+                            usleep(1500000);
                         }
                     }
 

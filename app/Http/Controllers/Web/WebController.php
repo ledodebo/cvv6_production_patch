@@ -728,8 +728,17 @@ class WebController extends Controller
         }
 
         // Concurrency protection: prevent double-clicks/race condition submissions
-        $lock = \Illuminate\Support\Facades\Cache::lock("checkout:user:{$user->id}", 10);
-        if (!$lock->get()) {
+        // Degrades gracefully if cache store does not support atomic locks (e.g. CACHE_DRIVER=file)
+        $lock = null;
+        try {
+            $lock = \Illuminate\Support\Facades\Cache::lock("checkout:user:{$user->id}", 10);
+            $acquired = $lock->get();
+        } catch (\Throwable $e) {
+            $lock = null;
+            $acquired = true;
+        }
+
+        if (!$acquired) {
             Toastr::warning(translate('A_checkout_is_already_in_progress._Please_wait.'));
             return back();
         }
@@ -780,6 +789,11 @@ class WebController extends Controller
                 'requestObj' => $request,
             ]);
 
+            if (empty($order_ids)) {
+                Toastr::error(translate('Failed_to_generate_order._Please_try_again.'));
+                return back();
+            }
+
             foreach ($order_ids as $order_id) {
                 OrderManager::generateReferBonusForFirstOrder(orderId: $order_id);
             }
@@ -791,12 +805,20 @@ class WebController extends Controller
             foreach ($order_ids as $order_id) {
                 try {
                     \App\Jobs\FulfillDigitalOrderJob::dispatch($order_id);
-                } catch (\Exception $e) {
+                } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::error("Fulfillment dispatch error for order #{$order_id}: " . $e->getMessage());
                 }
             }
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error("Wallet checkout fatal error: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
+            Toastr::error(translate('Unable_to_complete_wallet_checkout') . ': ' . $e->getMessage());
+            return back();
         } finally {
-            $lock->release();
+            try {
+                $lock?->release();
+            } catch (\Throwable $e) {
+                // Ignore lock release failures on unsupported cache stores
+            }
         }
 
         if (session()->has('payment_mode') && session('payment_mode') == 'app') {

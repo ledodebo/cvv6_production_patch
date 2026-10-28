@@ -41,7 +41,11 @@ class FulfillDigitalOrderJob implements ShouldQueue
         if (!$result['success'] && ($result['status'] ?? '') === 'pending') {
             if ($attempt < 5) {
                 Log::info("Order #{$this->orderId} status is pending, releasing back to queue for 5 seconds (attempt {$attempt}/5)");
-                $this->release(5);
+                try {
+                    $this->release(5);
+                } catch (\Throwable $e) {
+                    Log::warning("Queue release not supported by driver: " . $e->getMessage());
+                }
                 return;
             } else {
                 Log::warning("Order #{$this->orderId} exhausted all 5 polling attempts. Marking supplier_pending_review.");

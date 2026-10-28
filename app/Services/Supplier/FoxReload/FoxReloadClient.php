@@ -41,43 +41,49 @@ class FoxReloadClient
     }
 
     /**
-     * Build pre-configured HTTP client with robust SSL/TLS cURL options
-     */
-    /**
-     * Execute Python FoxReload bridge client
-     */
-    protected function runPythonCommand(array $args): ?array
-    {
-        $scriptPath = __DIR__ . '/foxreload_client.py';
-        if (!file_exists($scriptPath)) {
-            return null;
-        }
-
-        $escapedArgs = array_map('escapeshellarg', $args);
-        $cmdArgs = implode(' ', $escapedArgs);
-
-        // Try python3 first (standard on Linux), then python (standard on Windows)
-        foreach (['python3', 'python'] as $bin) {
-            $cmd = "{$bin} " . escapeshellarg($scriptPath) . " {$cmdArgs} 2>&1";
-            $output = @shell_exec($cmd);
-            if ($output !== null && trim($output) !== '') {
-                $decoded = json_decode(trim($output), true);
-                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
-                    return $decoded;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
      * Build pre-configured HTTP client
      */
     protected function client(): PendingRequest
     {
         return Http::withHeaders($this->getHeaders())
+            ->withoutVerifying()
             ->timeout($this->timeout);
+    }
+
+    /**
+     * Execute Python FoxReload bridge client as a fallback when shell_exec is permitted
+     */
+    protected function runPythonCommand(array $args): ?array
+    {
+        if (!function_exists('shell_exec') || !is_callable('shell_exec')) {
+            return null;
+        }
+
+        $scriptPath = __DIR__ . '/foxreload_client.py';
+        if (!file_exists($scriptPath)) {
+            return null;
+        }
+
+        try {
+            $escapedArgs = array_map('escapeshellarg', $args);
+            $cmdArgs = implode(' ', $escapedArgs);
+
+            // Try python3 first (standard on Linux), then python (standard on Windows)
+            foreach (['python3', 'python'] as $bin) {
+                $cmd = "{$bin} " . escapeshellarg($scriptPath) . " {$cmdArgs} 2>&1";
+                $output = @shell_exec($cmd);
+                if ($output !== null && trim($output) !== '') {
+                    $decoded = json_decode(trim($output), true);
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                        return $decoded;
+                    }
+                }
+            }
+        } catch (\Throwable $e) {
+            return null;
+        }
+
+        return null;
     }
 
     /**
@@ -85,20 +91,23 @@ class FoxReloadClient
      */
     public function testConnection(): bool
     {
-        // 1. Try via Python bridge
+        // 1. Primary: Native PHP HTTP request
+        try {
+            $response = $this->client()->get("{$this->baseUrl}/categories/", ['limit' => 1]);
+            if ($response->successful()) {
+                return true;
+            }
+        } catch (\Throwable $e) {
+            Log::error("FoxReload testConnection failed: " . $e->getMessage());
+        }
+
+        // 2. Secondary fallback: Python bridge
         $py = $this->runPythonCommand(['test-connection']);
         if ($py !== null && isset($py['success'])) {
             return (bool) $py['success'];
         }
 
-        // 2. Fallback to PHP cURL
-        try {
-            $response = $this->client()->get("{$this->baseUrl}/categories/", ['limit' => 1]);
-            return $response->successful();
-        } catch (Exception $e) {
-            Log::error("FoxReload testConnection failed: " . $e->getMessage());
-            return false;
-        }
+        return false;
     }
 
     /**
@@ -106,28 +115,33 @@ class FoxReloadClient
      */
     public function getCategories(?string $parentId = null, int $limit = 50, ?string $cursor = null): array
     {
-        // 1. Try Python bridge
+        // 1. Primary: Native PHP HTTP request
+        try {
+            $query = ['limit' => $limit];
+            if ($parentId) {
+                $query['parentId'] = $parentId;
+            }
+            if ($cursor) {
+                $query['cursor'] = $cursor;
+            }
+
+            $response = $this->client()->get("{$this->baseUrl}/categories/", $query);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error("FoxReload getCategories error: " . $response->body());
+        } catch (\Throwable $e) {
+            Log::error("FoxReload getCategories exception: " . $e->getMessage());
+        }
+
+        // 2. Secondary fallback: Python bridge
         $py = $this->runPythonCommand(['get-categories', $parentId ?? 'null', (string) $limit]);
         if ($py !== null && isset($py['items'])) {
             return $py;
         }
 
-        // 2. Fallback to PHP cURL
-        $query = ['limit' => $limit];
-        if ($parentId) {
-            $query['parentId'] = $parentId;
-        }
-        if ($cursor) {
-            $query['cursor'] = $cursor;
-        }
-
-        $response = $this->client()->get("{$this->baseUrl}/categories/", $query);
-
-        if ($response->successful()) {
-            return $response->json();
-        }
-
-        Log::error("FoxReload getCategories error: " . $response->body());
         return ['items' => []];
     }
 
@@ -136,30 +150,35 @@ class FoxReloadClient
      */
     public function getProducts(string $categoryId, int $limit = 50, int $offset = 0, bool $withStockOnly = true): array
     {
-        // 1. Try Python bridge
+        // 1. Primary: Native PHP HTTP request
+        try {
+            $query = [
+                'categoryId' => $categoryId,
+                'limit' => $limit,
+                'offset' => $offset,
+            ];
+
+            if ($withStockOnly) {
+                $query['withStockOnly'] = 'true';
+            }
+
+            $response = $this->client()->get("{$this->baseUrl}/products/", $query);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error("FoxReload getProducts error for category {$categoryId}: " . $response->body());
+        } catch (\Throwable $e) {
+            Log::error("FoxReload getProducts exception for category {$categoryId}: " . $e->getMessage());
+        }
+
+        // 2. Secondary fallback: Python bridge
         $py = $this->runPythonCommand(['get-products', $categoryId, (string) $limit, $withStockOnly ? 'true' : 'false']);
         if ($py !== null && isset($py['items'])) {
             return $py;
         }
 
-        // 2. Fallback to PHP cURL
-        $query = [
-            'categoryId' => $categoryId,
-            'limit' => $limit,
-            'offset' => $offset,
-        ];
-
-        if ($withStockOnly) {
-            $query['withStockOnly'] = 'true';
-        }
-
-        $response = $this->client()->get("{$this->baseUrl}/products/", $query);
-
-        if ($response->successful()) {
-            return $response->json();
-        }
-
-        Log::error("FoxReload getProducts error for category {$categoryId}: " . $response->body());
         return ['items' => []];
     }
 
@@ -168,20 +187,20 @@ class FoxReloadClient
      */
     public function getCategory(string $categoryId): ?array
     {
-        // 1. Try Python bridge
-        $py = $this->runPythonCommand(['get-category', $categoryId]);
-        if ($py !== null && is_array($py)) {
-            return $py;
-        }
-
-        // 2. Fallback to PHP cURL
+        // 1. Primary: Native PHP HTTP request
         try {
             $response = $this->client()->get("{$this->baseUrl}/categories/{$categoryId}");
             if ($response->successful()) {
                 return $response->json();
             }
-        } catch (Exception $e) {
+        } catch (\Throwable $e) {
             Log::warning("FoxReload getCategory error for {$categoryId}: " . $e->getMessage());
+        }
+
+        // 2. Secondary fallback: Python bridge
+        $py = $this->runPythonCommand(['get-category', $categoryId]);
+        if ($py !== null && is_array($py)) {
+            return $py;
         }
 
         return null;
@@ -198,14 +217,7 @@ class FoxReloadClient
      */
     public function getCategoryProductsGrouped(string $categoryId, int $limit = 50, bool $withStockOnly = true, ?array $allowedSubcategories = null): array
     {
-        // 1. Try Python bridge
-        $allowedJson = !empty($allowedSubcategories) ? json_encode($allowedSubcategories) : 'null';
-        $py = $this->runPythonCommand(['get-grouped', $categoryId, (string) $limit, $withStockOnly ? 'true' : 'false', $allowedJson]);
-        if ($py !== null && is_array($py) && !empty($py)) {
-            return $py;
-        }
-
-        // 2. Direct products in this category
+        // 1. Direct products in this category
         $direct = $this->getProducts($categoryId, limit: $limit, withStockOnly: $withStockOnly);
         $directItems = $direct['items'] ?? [];
 
@@ -286,13 +298,10 @@ class FoxReloadClient
      */
     public function getBalances(): array
     {
-        // 1. Try Python bridge
-        $py = $this->runPythonCommand(['get-balances']);
-        if ($py !== null && isset($py['success'])) {
-            return $py;
-        }
+        $status = 500;
+        $errData = 'Unknown error';
 
-        // 2. Fallback to PHP cURL
+        // 1. Primary: Native PHP HTTP request
         try {
             $response = $this->client()->get("{$this->baseUrl}/access/me/balances/");
             if ($response->successful()) {
@@ -301,18 +310,26 @@ class FoxReloadClient
                     'data' => $response->json(),
                 ];
             }
-            return [
-                'success' => false,
-                'status' => $response->status(),
-                'error' => $response->json() ?? $response->body(),
-            ];
-        } catch (Exception $e) {
-            Log::error("FoxReload getBalances failed: " . $e->getMessage());
-            return [
-                'success' => false,
-                'error' => $e->getMessage(),
-            ];
+            Log::error("FoxReload getBalances error: " . $response->body());
+            $status = $response->status();
+            $errData = $response->json() ?? $response->body();
+        } catch (\Throwable $e) {
+            Log::error("FoxReload getBalances exception: " . $e->getMessage());
+            $status = 500;
+            $errData = $e->getMessage();
         }
+
+        // 2. Secondary fallback: Python bridge
+        $py = $this->runPythonCommand(['get-balances']);
+        if ($py !== null && isset($py['success'])) {
+            return $py;
+        }
+
+        return [
+            'success' => false,
+            'status' => $status,
+            'error' => $errData,
+        ];
     }
 
     /**
@@ -341,8 +358,38 @@ class FoxReloadClient
     public function createOrder(array $items, ?bool $isMock = null, ?string $idempotencyKey = null): array
     {
         $mockMode = $isMock !== null ? $isMock : $this->isMock;
+        $status = 500;
+        $errData = 'Unknown error';
 
-        // 1. Try Python bridge
+        // 1. Primary: Native PHP HTTP request
+        try {
+            $payload = [
+                'items' => $items,
+                'isMock' => $mockMode,
+            ];
+            if ($idempotencyKey) {
+                $payload['idempotencyKey'] = (string) $idempotencyKey;
+            }
+
+            $response = $this->client()->post("{$this->baseUrl}/orders/", $payload);
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                ];
+            }
+
+            Log::error("FoxReload createOrder failed: " . $response->body());
+            $status = $response->status();
+            $errData = $response->json() ?? $response->body();
+        } catch (\Throwable $e) {
+            Log::error("FoxReload createOrder exception: " . $e->getMessage());
+            $status = 500;
+            $errData = $e->getMessage();
+        }
+
+        // 2. Secondary fallback: Python bridge
         $pyArgs = ['create-order', json_encode($items), $mockMode ? 'true' : 'false'];
         if ($idempotencyKey) {
             $pyArgs[] = $idempotencyKey;
@@ -352,29 +399,10 @@ class FoxReloadClient
             return $py;
         }
 
-        // 2. Fallback to PHP cURL
-        $payload = [
-            'items' => $items,
-            'isMock' => $mockMode,
-        ];
-        if ($idempotencyKey) {
-            $payload['idempotencyKey'] = (string) $idempotencyKey;
-        }
-
-        $response = $this->client()->post("{$this->baseUrl}/orders/", $payload);
-
-        if ($response->successful()) {
-            return [
-                'success' => true,
-                'data' => $response->json(),
-            ];
-        }
-
-        Log::error("FoxReload createOrder failed: " . $response->body());
         return [
             'success' => false,
-            'status' => $response->status(),
-            'error' => $response->json() ?? $response->body(),
+            'status' => $status,
+            'error' => $errData,
         ];
     }
 
@@ -384,7 +412,38 @@ class FoxReloadClient
      */
     public function payOrder(string $orderId, ?string $paymentProvider = null, ?string $paymentMethodType = null): array
     {
-        // 1. Try Python bridge
+        $status = 500;
+        $errData = 'Unknown error';
+
+        // 1. Primary: Native PHP HTTP request
+        try {
+            $payload = [];
+            if ($paymentProvider) {
+                $payload['paymentProvider'] = $paymentProvider;
+            }
+            if ($paymentMethodType) {
+                $payload['paymentMethodType'] = $paymentMethodType;
+            }
+
+            $response = $this->client()->post("{$this->baseUrl}/orders/{$orderId}/pay/", (object) $payload);
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                ];
+            }
+
+            Log::error("FoxReload payOrder failed for order {$orderId}: " . $response->body());
+            $status = $response->status();
+            $errData = $response->json() ?? $response->body();
+        } catch (\Throwable $e) {
+            Log::error("FoxReload payOrder exception for order {$orderId}: " . $e->getMessage());
+            $status = 500;
+            $errData = $e->getMessage();
+        }
+
+        // 2. Secondary fallback: Python bridge
         $pyArgs = ['pay-order', $orderId];
         if ($paymentProvider) {
             $pyArgs[] = $paymentProvider;
@@ -397,29 +456,10 @@ class FoxReloadClient
             return $py;
         }
 
-        // 2. Fallback to PHP cURL
-        $payload = [];
-        if ($paymentProvider) {
-            $payload['paymentProvider'] = $paymentProvider;
-        }
-        if ($paymentMethodType) {
-            $payload['paymentMethodType'] = $paymentMethodType;
-        }
-
-        $response = $this->client()->post("{$this->baseUrl}/orders/{$orderId}/pay/", (object) $payload);
-
-        if ($response->successful()) {
-            return [
-                'success' => true,
-                'data' => $response->json(),
-            ];
-        }
-
-        Log::error("FoxReload payOrder failed for order {$orderId}: " . $response->body());
         return [
             'success' => false,
-            'status' => $response->status(),
-            'error' => $response->json() ?? $response->body(),
+            'status' => $status,
+            'error' => $errData,
         ];
     }
 
@@ -428,27 +468,39 @@ class FoxReloadClient
      */
     public function getOrderStatus(string $orderId): array
     {
-        // 1. Try Python bridge
+        $status = 500;
+        $errData = 'Unknown error';
+
+        // 1. Primary: Native PHP HTTP request (no trailing slash for direct 200)
+        try {
+            $response = $this->client()->get("{$this->baseUrl}/orders/{$orderId}");
+
+            if ($response->successful()) {
+                return [
+                    'success' => true,
+                    'data' => $response->json(),
+                ];
+            }
+
+            Log::error("FoxReload getOrderStatus failed for order {$orderId}: " . $response->body());
+            $status = $response->status();
+            $errData = $response->json() ?? $response->body();
+        } catch (\Throwable $e) {
+            Log::error("FoxReload getOrderStatus exception for order {$orderId}: " . $e->getMessage());
+            $status = 500;
+            $errData = $e->getMessage();
+        }
+
+        // 2. Secondary fallback: Python bridge
         $py = $this->runPythonCommand(['get-order-status', $orderId]);
         if ($py !== null && isset($py['success'])) {
             return $py;
         }
 
-        // 2. Fallback to PHP cURL
-        $response = $this->client()->get("{$this->baseUrl}/orders/{$orderId}/");
-
-        if ($response->successful()) {
-            return [
-                'success' => true,
-                'data' => $response->json(),
-            ];
-        }
-
-        Log::error("FoxReload getOrderStatus failed for order {$orderId}: " . $response->body());
         return [
             'success' => false,
-            'status' => $response->status(),
-            'error' => $response->json() ?? $response->body(),
+            'status' => $status,
+            'error' => $errData,
         ];
     }
 

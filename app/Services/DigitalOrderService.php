@@ -106,8 +106,8 @@ class DigitalOrderService
                 ]);
             } else {
                 $clientRef = $detail->client_reference_id;
-                // If previously stuck in pending review or pending, allow re-evaluation
-                if (in_array($detail->fulfillment_status, ['supplier_pending_review', 'pending'])) {
+                // If previously stuck in pending review, pending, or interrupted purchasing, allow re-evaluation
+                if (in_array($detail->fulfillment_status, ['supplier_pending_review', 'pending', 'purchasing'])) {
                     $detail->update(['fulfillment_status' => 'purchasing']);
                 }
             }

@@ -89,10 +89,8 @@
                                                                                 <i class="bi bi-gift-fill text-primary me-1"></i> {{ translate('Digital Voucher Codes') }}:
                                                                             </div>
                                                                             @foreach ($detail->digitalCardCodes as $cardCode)
-                                                                                @php
-                                                                                    $rawCodeStr = (string)$cardCode->card_code;
-                                                                                    $maskedStr = strlen($rawCodeStr) >= 4 ? '••••-••••-••••-' . substr($rawCodeStr, -4) : '••••-••••-••••';
-                                                                                @endphp
+                                                                                @php($rawCodeStr = (string)$cardCode->card_code)
+                                                                                @php($maskedStr = strlen($rawCodeStr) >= 4 ? '••••-••••-••••-' . substr($rawCodeStr, -4) : '••••-••••-••••')
                                                                                 <div class="digital-voucher-card p-2 mb-2 border rounded bg-light"
                                                                                      data-code-id="{{ $cardCode->id }}"
                                                                                      data-reveal-url="{{ route('account-order-digital-codes.reveal', $cardCode->id) }}">

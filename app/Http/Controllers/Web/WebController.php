@@ -836,7 +836,8 @@ class WebController extends Controller
     {
         $isNewCustomerInSession = session('newCustomerRegister');
         session()->forget('newCustomerRegister');
-        return view(VIEW_FILE_NAMES['order_complete'], compact('isNewCustomerInSession'));
+        $order_ids = session('recent_order_ids') ?? session('order_success_ids') ?? [];
+        return view(VIEW_FILE_NAMES['order_complete'], compact('isNewCustomerInSession', 'order_ids'));
     }
 
     public function shop_cart(Request $request): View|RedirectResponse

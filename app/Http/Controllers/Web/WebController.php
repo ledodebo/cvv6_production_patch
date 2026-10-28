@@ -590,9 +590,16 @@ class WebController extends Controller
             // Ensure instant delivery even if queue worker is not running in background
             foreach ($orderIds as $ordId) {
                 try {
-                    $pendingOrder = \App\Models\Order::find($ordId);
-                    if ($pendingOrder && in_array($pendingOrder->fulfillment_status, ['pending', 'purchasing'])) {
-                        app(\App\Services\DigitalOrderService::class)->fulfillOrder($pendingOrder->id);
+                    $pendingOrder = \App\Models\Order::with('details.digitalCardCodes')->find($ordId);
+                    if ($pendingOrder) {
+                        $needsFulfillment = empty($pendingOrder->fulfillment_status)
+                            || in_array($pendingOrder->fulfillment_status, ['pending', 'purchasing', 'supplier_pending_review'])
+                            || $pendingOrder->details->contains(function ($d) {
+                                return $d->digitalCardCodes->count() < $d->qty && !in_array($d->fulfillment_status, ['delivered', 'supplier_failed']);
+                            });
+                        if ($needsFulfillment) {
+                            app(\App\Services\DigitalOrderService::class)->fulfillOrder($pendingOrder->id);
+                        }
                     }
                 } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::warning("Immediate fulfillment on order complete view failed for #{$ordId}: " . $e->getMessage());
@@ -801,12 +808,12 @@ class WebController extends Controller
             $walletReference = !empty($order_ids) ? 'order_' . implode('_', $order_ids) : 'order payment';
             CustomerManager::create_wallet_transaction($user->id, Convert::default($paymentAmount), 'order_place', $walletReference);
 
-            // Dispatch digital card fulfillment via FulfillDigitalOrderJob / DigitalOrderService
+            // Fulfill digital order immediately on wallet payment (no queue worker dependency)
             foreach ($order_ids as $order_id) {
                 try {
-                    \App\Jobs\FulfillDigitalOrderJob::dispatch($order_id);
+                    app(\App\Services\DigitalOrderService::class)->fulfillOrder($order_id);
                 } catch (\Throwable $e) {
-                    \Illuminate\Support\Facades\Log::error("Fulfillment dispatch error for order #{$order_id}: " . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error("Immediate fulfillment error for order #{$order_id}: " . $e->getMessage());
                 }
             }
         } catch (\Throwable $e) {

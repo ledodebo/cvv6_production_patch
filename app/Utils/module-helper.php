@@ -86,9 +86,9 @@ if (!function_exists('digital_payment_success')) {
             foreach ($orderIds as $orderId) {
                 OrderManager::generateReferBonusForFirstOrder(orderId: $orderId);
                 try {
-                    \App\Jobs\FulfillDigitalOrderJob::dispatch($orderId);
+                    app(\App\Services\DigitalOrderService::class)->fulfillOrder($orderId);
                 } catch (\Exception $e) {
-                    \Illuminate\Support\Facades\Log::error("Fulfillment dispatch error for digital payment order #{$orderId}: " . $e->getMessage());
+                    \Illuminate\Support\Facades\Log::error("Fulfillment error for digital payment order #{$orderId}: " . $e->getMessage());
                 }
             }
         }

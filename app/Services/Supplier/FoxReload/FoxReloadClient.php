@@ -17,9 +17,9 @@ class FoxReloadClient
     public function __construct()
     {
         $this->baseUrl = rtrim(config('suppliers.suppliers.foxreload.base_url', env('FOXRELOAD_BASE_URL', 'https://public-api.foxreload.com/api')), '/');
-        $this->apiKey = config('suppliers.suppliers.foxreload.api_key', env('FOXRELOAD_API_KEY'));
+        $this->apiKey = config('suppliers.suppliers.foxreload.api_key', env('FOXRELOAD_API_KEY', 'dmk_dtuTuHaZtge-jkyoxVyOXa5CBwE4sRNOnMLnonzSeRk'));
         $this->timeout = (int) config('suppliers.suppliers.foxreload.timeout', 30);
-        $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', true));
+        $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', false));
     }
 
     /**

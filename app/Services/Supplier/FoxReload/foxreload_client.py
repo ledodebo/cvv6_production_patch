@@ -18,7 +18,7 @@ except AttributeError:
 def load_env_file():
     """Load API key and base url from .env if present."""
     config = {
-        'API_KEY': os.environ.get('FOXRELOAD_API_KEY', 'dmk_NzUT8k3M-sTu5Vg5dEyjiyEMED2qhOoA-ngnrBGQDiY'),
+        'API_KEY': os.environ.get('FOXRELOAD_API_KEY', 'dmk_dtuTuHaZtge-jkyoxVyOXa5CBwE4sRNOnMLnonzSeRk'),
         'BASE_URL': os.environ.get('FOXRELOAD_BASE_URL', 'https://public-api.foxreload.com/api'),
         'CURRENCY': os.environ.get('FOXRELOAD_CURRENCY', 'usd'),
         'LANGUAGE': os.environ.get('FOXRELOAD_LANGUAGE', 'en'),

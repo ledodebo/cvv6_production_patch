@@ -21,7 +21,7 @@ class DigitalOrderService
     public function __construct(?FoxReloadClient $client = null)
     {
         $this->client = $client ?? new FoxReloadClient();
-        $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', true));
+        $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', false));
     }
 
     /**
@@ -81,9 +81,18 @@ class DigitalOrderService
                 continue;
             }
 
-            $mapping = ProductProviderMapping::where('product_id', $detail->product_id)
-                ->where('is_active', 1)
-                ->first();
+            $mapping = null;
+            if (!empty($detail->variant)) {
+                $mapping = ProductProviderMapping::where('product_id', $detail->product_id)
+                    ->where('variant_key', $detail->variant)
+                    ->where('is_active', 1)
+                    ->first();
+            }
+            if (!$mapping) {
+                $mapping = ProductProviderMapping::where('product_id', $detail->product_id)
+                    ->where('is_active', 1)
+                    ->first();
+            }
 
             $costPerUnit = $mapping ? (string)$mapping->cost_price : bcmul((string)$detail->price, '0.80', 8);
             $itemTotalCost = bcmul($costPerUnit, (string)$detail->qty, 8);

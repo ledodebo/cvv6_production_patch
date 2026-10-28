@@ -88,7 +88,7 @@ class DigitalProductDownloadController extends Controller
             return response()->json(['success' => false, 'message' => translate('Order not found')], 404);
         }
 
-        if (in_array($order->fulfillment_status, ['pending', 'purchasing'])) {
+        if (empty($order->fulfillment_status) || in_array($order->fulfillment_status, ['pending', 'purchasing', 'supplier_pending_review'])) {
             try {
                 app(\App\Services\DigitalOrderService::class)->fulfillOrder($order->id);
                 $order->load(['details.product', 'details.digitalCardCodes']);

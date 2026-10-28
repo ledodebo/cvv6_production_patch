@@ -415,7 +415,7 @@ class UserProfileController extends Controller
                     break;
                 }
             }
-            if ($needsFulfillment || in_array($order->fulfillment_status, ['pending', 'purchasing', 'supplier_pending_review'])) {
+            if ($needsFulfillment || empty($order->fulfillment_status) || in_array($order->fulfillment_status, ['pending', 'purchasing', 'supplier_pending_review'])) {
                 try {
                     app(\App\Services\DigitalOrderService::class)->fulfillOrder($order->id);
                     $order->refresh();

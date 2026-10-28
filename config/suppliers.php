@@ -30,7 +30,7 @@ return [
 
             // Connection Settings
             'base_url' => env('FOXRELOAD_BASE_URL', 'https://public-api.foxreload.com/api'),
-            'api_key'  => env('FOXRELOAD_API_KEY'),
+            'api_key'  => env('FOXRELOAD_API_KEY', 'dmk_dtuTuHaZtge-jkyoxVyOXa5CBwE4sRNOnMLnonzSeRk'),
 
             // Request Headers & Preferences
             'headers' => [
@@ -46,8 +46,8 @@ return [
                 'multiplier' => 2.0,
             ],
 
-            // Testing & Mock Mode
-            'is_mock' => env('FOXRELOAD_IS_MOCK', true),
+            // Testing & Mock Mode (Live by default)
+            'is_mock' => env('FOXRELOAD_IS_MOCK', false),
 
             // Pricing Rules
             'markup_percent' => env('FOXRELOAD_MARKUP_PERCENT', 7.0),

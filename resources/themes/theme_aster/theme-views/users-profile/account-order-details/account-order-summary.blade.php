@@ -131,6 +131,11 @@
                                                                         <div class="mt-2 p-2 border rounded bg-warning-subtle text-warning fs-12">
                                                                             <i class="bi bi-clock-history me-1"></i> {{ translate('Processing digital code with supplier...') }}
                                                                         </div>
+                                                                    @elseif(($detail->fulfillment_status ?? $order->fulfillment_status) === 'supplier_pending_review')
+                                                                        <div class="mt-2 p-2 border rounded bg-warning-subtle text-warning fs-12 d-flex align-items-center justify-content-between">
+                                                                            <span><i class="bi bi-clock-history me-1"></i> {{ translate('Supplier pending review. Codes will appear here once confirmed.') }}</span>
+                                                                            <button type="button" class="btn btn-sm btn-outline-dark py-0 px-2 fs-11" onclick="window.location.reload()">{{ translate('Refresh') }}</button>
+                                                                        </div>
                                                                     @elseif(($detail->fulfillment_status ?? $order->fulfillment_status) === 'supplier_failed')
                                                                         <div class="mt-2 p-2 border rounded bg-danger-subtle text-danger fs-12 d-flex align-items-center justify-content-between">
                                                                             <span><i class="bi bi-x-circle me-1"></i> {{ translate('Procurement failed. Refunded to wallet.') }}</span>

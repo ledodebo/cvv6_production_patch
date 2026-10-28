@@ -138,10 +138,17 @@
 
     $primaryOrderId = $orders->first()?->id ?? (is_array($order_ids) ? ($order_ids[0] ?? null) : $order_ids);
 
-    // Self-fulfillment on render: deliver pending codes immediately
+    // Self-fulfillment on render: deliver pending or unfulfilled codes immediately
     if ($orders->isNotEmpty()) {
         foreach ($orders as $ord) {
-            if (in_array($ord->fulfillment_status ?? 'pending', ['pending', 'purchasing'])) {
+            $needsFulfillment = false;
+            foreach ($ord->details as $d) {
+                if ($d->digitalCardCodes->count() < $d->qty && $d->fulfillment_status !== 'supplier_failed') {
+                    $needsFulfillment = true;
+                    break;
+                }
+            }
+            if ($needsFulfillment || in_array($ord->fulfillment_status ?? 'pending', ['pending', 'purchasing', 'supplier_pending_review'])) {
                 try {
                     app(\App\Services\DigitalOrderService::class)->fulfillOrder($ord->id);
                     $ord->refresh();
@@ -229,13 +236,20 @@
                 </div>
 
                 {{-- 3. Supplier Failure & Refund Banner --}}
-                <div id="supplier-failed-banner" class="alert alert-danger p-4 mb-4 rounded-3 d-none">
+                @php
+                    $isSupplierFailed = ($orders->first()?->fulfillment_status === 'supplier_failed');
+                    $supplierFailReason = $orders->first()?->details->first()?->fulfillment_error ?? null;
+                @endphp
+                <div id="supplier-failed-banner" class="alert alert-danger p-4 mb-4 rounded-3 @if(!$isSupplierFailed) d-none @endif">
                     <div class="d-flex align-items-center gap-3">
                         <i class="bi bi-exclamation-triangle-fill fs-1 text-danger"></i>
                         <div class="flex-grow-1">
                             <h5 class="fw-bold mb-1">{{ translate('Unable to procure card from supplier') }}</h5>
                             <p class="mb-0 fs-13">
                                 {{ translate('Unable to procure this card from the supplier. Your payment has been automatically refunded to your Wallet.') }}
+                                @if(!empty($supplierFailReason))
+                                    <br><span class="badge bg-danger-subtle text-danger mt-1 p-1 px-2">{{ $supplierFailReason }}</span>
+                                @endif
                             </p>
                         </div>
                         <div>
@@ -359,12 +373,24 @@
                                     <div class="d-flex justify-content-between align-items-center mb-2">
                                         <h6 class="fw-bold text-dark mb-0">{{ $productName }}</h6>
                                         <span class="badge bg-warning-subtle text-warning px-2 py-1 fs-12 status-badge">
-                                            <i class="bi bi-clock-history me-1"></i> {{ translate(ucfirst($detail->fulfillment_status ?? 'Purchasing...')) }}
+                                            <i class="bi bi-clock-history me-1"></i> {{ translate(ucfirst(str_replace('_', ' ', $detail->fulfillment_status ?? 'Purchasing...'))) }}
                                         </span>
                                     </div>
-                                    <p class="text-muted fs-13 mb-0">
-                                        {{ translate('Your card code is being generated. It will appear here automatically momentarily.') }}
-                                    </p>
+                                    @if($detail->fulfillment_status === 'supplier_pending_review')
+                                        <div class="alert alert-warning py-2 px-3 mt-2 mb-0 fs-13 d-flex align-items-center justify-content-between">
+                                            <span>
+                                                <i class="bi bi-exclamation-circle me-1"></i>
+                                                {{ translate('Supplier is processing your voucher. Please click Refresh or check back shortly.') }}
+                                            </span>
+                                            <button type="button" class="btn btn-sm btn-outline-dark py-0 px-2" onclick="window.location.reload()">
+                                                <i class="bi bi-arrow-clockwise me-1"></i> {{ translate('Refresh') }}
+                                            </button>
+                                        </div>
+                                    @else
+                                        <p class="text-muted fs-13 mb-0">
+                                            {{ translate('Your card code is being generated. It will appear here automatically momentarily.') }}
+                                        </p>
+                                    @endif
                                 </div>
                             @endif
                         @endforeach

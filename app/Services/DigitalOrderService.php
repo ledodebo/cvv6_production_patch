@@ -74,8 +74,9 @@ class DigitalOrderService
         $totalDigitalItems = $digitalDetails->count();
 
         foreach ($digitalDetails as $detail) {
-            // Skip already delivered items
-            if ($detail->fulfillment_status === 'delivered') {
+            // Check if already delivered with required quantity of codes
+            $existingCodesCount = $detail->digitalCardCodes()->count();
+            if ($existingCodesCount >= $detail->qty && $detail->fulfillment_status === 'delivered') {
                 $deliveredItemsCount++;
                 continue;
             }
@@ -96,26 +97,60 @@ class DigitalOrderService
                 ]);
             } else {
                 $clientRef = $detail->client_reference_id;
-            }
-
-            // Step 2: Check balance in live mode before purchasing
-            if (!$this->isMock) {
-                $usdBalance = $this->client->getUsdBalance();
-                if ($usdBalance !== null && bccomp((string)$usdBalance, $itemTotalCost, 8) < 0) {
-                    Log::critical("FoxReload balance insufficient ({$usdBalance} < {$itemTotalCost}) for order #{$order->id}, detail #{$detail->id}");
-                    $this->handleItemFailure($order, $detail, "Supplier balance insufficient");
-                    $failedItemsCount++;
-                    continue;
+                // If previously stuck in pending review or pending, allow re-evaluation
+                if (in_array($detail->fulfillment_status, ['supplier_pending_review', 'pending'])) {
+                    $detail->update(['fulfillment_status' => 'purchasing']);
                 }
             }
 
-            // Step 3: Procure from FoxReload if external_item_id exists
+            // Step 2: Instant simulated delivery for Mock Mode
+            // FoxReload public API limits mock orders when balance is $0 (MOCK_ORDER_LIMIT_REACHED).
+            // When is_mock is true, generate authentic simulated digital codes locally without API dependency.
+            if ($this->isMock) {
+                Log::info("Mock mode enabled: generating instant simulated codes for order #{$order->id}, detail #{$detail->id}");
+                $mockCodes = [];
+                for ($i = $existingCodesCount; $i < (int)$detail->qty; $i++) {
+                    $mockCodes[] = 'GBC-' . strtoupper(Str::random(4)) . '-' . strtoupper(Str::random(4)) . '-' . strtoupper(Str::random(4));
+                }
+
+                foreach ($mockCodes as $code) {
+                    DigitalCardCode::create([
+                        'order_id' => $order->id,
+                        'order_detail_id' => $detail->id,
+                        'user_id' => $order->customer_id,
+                        'card_code' => $code,
+                        'pin' => '1234',
+                        'delivered_at' => now(),
+                    ]);
+                }
+
+                $detail->update([
+                    'fulfillment_status' => 'delivered',
+                    'delivery_status' => 'delivered'
+                ]);
+
+                $totalDeliveredCost = bcadd($totalDeliveredCost, $itemTotalCost, 8);
+                $deliveredItemsCount++;
+                continue;
+            }
+
+            // Step 3 (Live Mode): Check FoxReload wholesale balance before purchasing
+            $usdBalance = $this->client->getUsdBalance();
+            if ($usdBalance !== null && bccomp((string)$usdBalance, $itemTotalCost, 8) < 0) {
+                $errMsg = "FoxReload balance insufficient ($" . number_format((float)$usdBalance, 2) . " available, $" . number_format((float)$itemTotalCost, 2) . " required). Please top up your FoxReload wholesale balance.";
+                Log::critical("Order #{$order->id}, detail #{$detail->id}: {$errMsg}");
+                $this->handleItemFailure($order, $detail, $errMsg);
+                $failedItemsCount++;
+                continue;
+            }
+
+            // Step 4 (Live Mode): Procure from FoxReload
             $externalItemId = $mapping?->external_item_id;
             $codes = [];
             $foxOrderId = $detail->foxreload_order_id;
 
             if ($externalItemId) {
-                // If order was not yet created at FoxReload, create it now with idempotency key
+                // If order was not yet created at FoxReload, create it now
                 if (empty($foxOrderId)) {
                     $itemsPayload = [
                         [
@@ -124,7 +159,7 @@ class DigitalOrderService
                         ]
                     ];
 
-                    $createRes = $this->client->createOrder($itemsPayload, isMock: $this->isMock, idempotencyKey: $clientRef);
+                    $createRes = $this->client->createOrder($itemsPayload, isMock: false, idempotencyKey: $clientRef);
 
                     if (!empty($createRes['success']) && !empty($createRes['data']['id'])) {
                         $foxOrderId = $createRes['data']['id'];
@@ -132,25 +167,21 @@ class DigitalOrderService
                         if (empty($order->foxreload_order_id)) {
                             $order->update(['foxreload_order_id' => $foxOrderId]);
                         }
-                        // Pay for order
-                        $this->client->payOrder($foxOrderId);
+                        // Pay for order from wholesale balance (empty payload {})
+                        $payRes = $this->client->payOrder($foxOrderId);
+                        Log::info("FoxReload order #{$foxOrderId} payment response: " . json_encode($payRes));
                     } else {
                         $rawErr = $createRes['error'] ?? 'FoxReload order creation failed';
                         $errMsg = is_array($rawErr) ? json_encode($rawErr) : (string)$rawErr;
                         Log::warning("FoxReload order creation failed for detail #{$detail->id}: {$errMsg}");
-
-                        if ($this->isMock) {
-                            Log::info("Mock mode: FoxReload returned ({$errMsg}), proceeding to simulated test card delivery for order #{$order->id}, detail #{$detail->id}");
-                        } else {
-                            $this->handleItemFailure($order, $detail, $errMsg);
-                            $failedItemsCount++;
-                            continue;
-                        }
+                        $this->handleItemFailure($order, $detail, $errMsg);
+                        $failedItemsCount++;
+                        continue;
                     }
                 }
 
                 if (!empty($foxOrderId)) {
-                    // Immediate 1-time check (non-blocking)
+                    // Check order status at FoxReload
                     $statusRes = $this->client->getOrderStatus($foxOrderId);
                     $foxStatus = $statusRes['data']['status'] ?? 'pending';
 
@@ -170,35 +201,18 @@ class DigitalOrderService
                         $rawItemErr = $statusRes['data']['items'][0]['error'] ?? "FoxReload order status: {$foxStatus}";
                         $itemErr = is_array($rawItemErr) ? json_encode($rawItemErr) : (string)$rawItemErr;
                         Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
-
-                        if ($this->isMock) {
-                            Log::info("Mock mode: FoxReload status {$foxStatus}, generating simulated codes");
-                        } else {
-                            $this->handleItemFailure($order, $detail, $itemErr);
-                            $failedItemsCount++;
-                            continue;
-                        }
+                        $this->handleItemFailure($order, $detail, $itemErr);
+                        $failedItemsCount++;
+                        continue;
                     } else {
                         // Pending / processing at FoxReload
-                        if ($this->isMock) {
-                            Log::info("Mock mode: FoxReload status is pending, generating immediate simulated codes");
-                        } else {
-                            $pendingItemsCount++;
-                            continue;
-                        }
+                        $pendingItemsCount++;
+                        continue;
                     }
                 }
             }
 
-            // Step 4: Simulated mock fallback for local testing
-            if (empty($codes) && $this->isMock) {
-                Log::info("Generating simulated mock codes for order #{$order->id}, detail #{$detail->id}");
-                for ($i = 0; $i < (int)$detail->qty; $i++) {
-                    $codes[] = 'TEST-' . strtoupper(Str::random(4)) . '-' . strtoupper(Str::random(4)) . '-' . strtoupper(Str::random(4));
-                }
-            }
-
-            // Step 5: Save delivered card codes encrypted with CARD_VAULT_KEY
+            // Step 5: Save delivered live card codes
             if (!empty($codes)) {
                 foreach ($codes as $code) {
                     DigitalCardCode::create([

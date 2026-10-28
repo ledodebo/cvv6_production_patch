@@ -380,22 +380,33 @@ class FoxReloadClient
 
     /**
      * Trigger payment/confirmation on an active FoxReload order
+     * When paying from wholesale balance, pass null/empty to send {}
      */
-    public function payOrder(string $orderId, string $paymentProvider = 'pally', string $paymentMethodType = 'bank_card'): array
+    public function payOrder(string $orderId, ?string $paymentProvider = null, ?string $paymentMethodType = null): array
     {
         // 1. Try Python bridge
-        $py = $this->runPythonCommand(['pay-order', $orderId]);
+        $pyArgs = ['pay-order', $orderId];
+        if ($paymentProvider) {
+            $pyArgs[] = $paymentProvider;
+            if ($paymentMethodType) {
+                $pyArgs[] = $paymentMethodType;
+            }
+        }
+        $py = $this->runPythonCommand($pyArgs);
         if ($py !== null && isset($py['success'])) {
             return $py;
         }
 
         // 2. Fallback to PHP cURL
-        $payload = [
-            'paymentProvider' => $paymentProvider,
-            'paymentMethodType' => $paymentMethodType,
-        ];
+        $payload = [];
+        if ($paymentProvider) {
+            $payload['paymentProvider'] = $paymentProvider;
+        }
+        if ($paymentMethodType) {
+            $payload['paymentMethodType'] = $paymentMethodType;
+        }
 
-        $response = $this->client()->post("{$this->baseUrl}/orders/{$orderId}/pay/", $payload);
+        $response = $this->client()->post("{$this->baseUrl}/orders/{$orderId}/pay/", (object) $payload);
 
         if ($response->successful()) {
             return [

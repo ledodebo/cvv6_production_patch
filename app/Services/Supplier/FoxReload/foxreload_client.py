@@ -184,10 +184,14 @@ def create_order(items, is_mock=True, idempotency_key=None):
         return {"success": False, "error": str(e)}
 
 
-def pay_order(order_id, payment_provider="pally", payment_method_type="bank_card"):
+def pay_order(order_id, payment_provider=None, payment_method_type=None):
     try:
         url = f"{CONFIG['BASE_URL']}/orders/{order_id}/pay/"
-        payload = {"paymentProvider": payment_provider, "paymentMethodType": payment_method_type}
+        payload = {}
+        if payment_provider and payment_provider != "null":
+            payload["paymentProvider"] = payment_provider
+        if payment_method_type and payment_method_type != "null":
+            payload["paymentMethodType"] = payment_method_type
         res = requests.post(url, json=payload, headers=HEADERS, timeout=30)
         if res.status_code in [200, 201]:
             return {"success": True, "data": res.json()}
@@ -243,7 +247,9 @@ def main():
         print(json.dumps(create_order(items, is_mock=is_mock, idempotency_key=idempotency_key)))
     elif action == "pay-order":
         order_id = sys.argv[2]
-        print(json.dumps(pay_order(order_id)))
+        provider = sys.argv[3] if len(sys.argv) > 3 and sys.argv[3] != "null" else None
+        method = sys.argv[4] if len(sys.argv) > 4 and sys.argv[4] != "null" else None
+        print(json.dumps(pay_order(order_id, payment_provider=provider, payment_method_type=method)))
     elif action == "get-order-status":
         order_id = sys.argv[2]
         print(json.dumps(get_order_status(order_id)))

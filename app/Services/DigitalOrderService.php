@@ -170,6 +170,8 @@ class DigitalOrderService
                         // Pay for order from wholesale balance (empty payload {})
                         $payRes = $this->client->payOrder($foxOrderId);
                         Log::info("FoxReload order #{$foxOrderId} payment response: " . json_encode($payRes));
+                        // Allow 1.5s for supplier backend to generate/assign voucher codes
+                        usleep(1500000);
                     } else {
                         $rawErr = $createRes['error'] ?? 'FoxReload order creation failed';
                         $errMsg = is_array($rawErr) ? json_encode($rawErr) : (string)$rawErr;
@@ -184,30 +186,33 @@ class DigitalOrderService
                     // Check order status at FoxReload
                     $statusRes = $this->client->getOrderStatus($foxOrderId);
                     $foxStatus = $statusRes['data']['status'] ?? 'pending';
+                    $foxItems = $statusRes['data']['items'] ?? [];
 
-                    if ($foxStatus === 'completed') {
-                        $foxItems = $statusRes['data']['items'] ?? [];
-                        foreach ($foxItems as $fItem) {
-                            $extData = $fItem['externalData'] ?? [];
-                            if (is_array($extData)) {
-                                foreach ($extData as $codeStr) {
-                                    if (is_string($codeStr) && trim($codeStr) !== '') {
-                                        $codes[] = trim($codeStr);
-                                    }
+                    // Extract codes if present in any item externalData
+                    foreach ($foxItems as $fItem) {
+                        $extData = $fItem['externalData'] ?? [];
+                        if (is_array($extData)) {
+                            foreach ($extData as $codeStr) {
+                                if (is_string($codeStr) && trim($codeStr) !== '') {
+                                    $codes[] = trim($codeStr);
                                 }
                             }
                         }
-                    } elseif (in_array($foxStatus, ['failed', 'cancelled'])) {
-                        $rawItemErr = $statusRes['data']['items'][0]['error'] ?? "FoxReload order status: {$foxStatus}";
-                        $itemErr = is_array($rawItemErr) ? json_encode($rawItemErr) : (string)$rawItemErr;
-                        Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
-                        $this->handleItemFailure($order, $detail, $itemErr);
-                        $failedItemsCount++;
-                        continue;
-                    } else {
-                        // Pending / processing at FoxReload
-                        $pendingItemsCount++;
-                        continue;
+                    }
+
+                    if (empty($codes)) {
+                        if (in_array($foxStatus, ['failed', 'cancelled'])) {
+                            $rawItemErr = $foxItems[0]['error'] ?? "FoxReload order status: {$foxStatus}";
+                            $itemErr = is_array($rawItemErr) ? json_encode($rawItemErr) : (string)$rawItemErr;
+                            Log::warning("FoxReload order {$foxOrderId} failed: {$itemErr}");
+                            $this->handleItemFailure($order, $detail, $itemErr);
+                            $failedItemsCount++;
+                            continue;
+                        } else {
+                            // Paid/processing at supplier, waiting for code generation
+                            $pendingItemsCount++;
+                            continue;
+                        }
                     }
                 }
             }
@@ -215,11 +220,17 @@ class DigitalOrderService
             // Step 5: Save delivered live card codes
             if (!empty($codes)) {
                 foreach ($codes as $code) {
+                    $pin = null;
+                    if (preg_match('/(?:PIN|Pin|pin):\s*([0-9a-zA-Z]+)/', $code, $pinMatch)) {
+                        $pin = $pinMatch[1];
+                    }
+
                     DigitalCardCode::create([
                         'order_id' => $order->id,
                         'order_detail_id' => $detail->id,
                         'user_id' => $order->customer_id,
                         'card_code' => $code,
+                        'pin' => $pin,
                         'delivered_at' => now(),
                     ]);
                 }

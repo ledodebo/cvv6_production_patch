@@ -398,12 +398,27 @@ class UserProfileController extends Controller
     public function account_order_details(Request $request): View|RedirectResponse
     {
         $availablePaymentMethod = [];
-        $order = $this->order->with(['deliveryManReview', 'customer', 'offlinePayments', 'details.productAllStatus', 'details.refundRequest', 'details.digitalCardCodes'])->where(['id' => $request['id'], 'customer_id' => auth('customer')->id(), 'is_guest' => '0'])->first();
+        $orderId = $request['id'];
+        $order = $this->order->with(['deliveryManReview', 'customer', 'offlinePayments', 'details.productAllStatus', 'details.refundRequest', 'details.digitalCardCodes'])
+            ->where(function ($q) use ($orderId) {
+                $q->where('id', $orderId)
+                  ->orWhereHas('details', fn($dq) => $dq->where('id', $orderId));
+            })
+            ->where('customer_id', auth('customer')->id())
+            ->first();
 
         if ($order) {
-            if (in_array($order->fulfillment_status, ['pending', 'purchasing'])) {
+            $needsFulfillment = false;
+            foreach ($order->details as $d) {
+                if ($d->digitalCardCodes->count() < $d->qty && $d->fulfillment_status !== 'supplier_failed') {
+                    $needsFulfillment = true;
+                    break;
+                }
+            }
+            if ($needsFulfillment || in_array($order->fulfillment_status, ['pending', 'purchasing', 'supplier_pending_review'])) {
                 try {
                     app(\App\Services\DigitalOrderService::class)->fulfillOrder($order->id);
+                    $order->refresh();
                     $order->load(['details.productAllStatus', 'details.refundRequest', 'details.digitalCardCodes']);
                 } catch (\Throwable $e) {
                     \Illuminate\Support\Facades\Log::warning("Immediate fulfillment on account details view failed: " . $e->getMessage());

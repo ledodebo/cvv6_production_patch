@@ -234,17 +234,28 @@ class PaymentController extends Controller
                     $decoded = $request->token ? base64_decode($request->token) : '';
                     $parts = explode('&&', $decoded);
                     foreach ($parts as $part) {
-                        [$key, $value] = explode('=', $part);
-                        $data[$key] = $value;
+                        if (str_contains($part, '=')) {
+                            [$key, $value] = explode('=', $part, 2);
+                            $data[$key] = $value;
+                        }
                     }
                 }
                 $orderIds = [];
-                if ($transactionReference) {
+                $transactionReference = $data['transaction_reference'] ?? $request->get('transaction_reference');
+                if (!empty($transactionReference)) {
                     $orderIds = Order::where(['transaction_ref' => $transactionReference])->get()->pluck('id')->toArray();
                     session(['order_success_ids' => $orderIds, 'recent_order_ids' => $orderIds]);
                 } elseif (session()->has('order_success_ids')) {
                     $orderIds = (array) session('order_success_ids');
                     session(['recent_order_ids' => $orderIds]);
+                }
+
+                if (empty($orderIds) && !empty($request->order_ids)) {
+                    $decodedOrderIds = json_decode(base64_decode($request->order_ids), true);
+                    if (is_array($decodedOrderIds)) {
+                        $orderIds = $decodedOrderIds;
+                        session(['order_success_ids' => $orderIds, 'recent_order_ids' => $orderIds]);
+                    }
                 }
 
                 Toastr::success(translate('Payment_success'));

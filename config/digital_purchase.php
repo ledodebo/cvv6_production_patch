@@ -8,7 +8,7 @@ return [
     | When enabled, a "Sandbox Gateway" appears in checkout that allows 1-click
     | simulated payments without touching real gateways or PayPal credentials.
     */
-    'sandbox_gateway_enabled' => (bool) env('PAYMENT_GATEWAY_SANDBOX', true),
+    'sandbox_gateway_enabled' => (bool) env('PAYMENT_GATEWAY_SANDBOX', false),
 
     /*
     |--------------------------------------------------------------------------

@@ -267,16 +267,10 @@ class Helpers
 
     public static function getDefaultPaymentGateways(): array
     {
-        $gateways = [
+        return [
             'ssl_commerz', 'paypal', 'stripe', 'razor_pay', 'paystack', 'senang_pay', 'paymob_accept',
             'flutterwave', 'paytm', 'paytabs', 'liqpay', 'mercadopago', 'bkash'
         ];
-
-        if (env('PAYMENT_GATEWAY_SANDBOX', true)) {
-            $gateways[] = 'sandbox';
-        }
-
-        return $gateways;
     }
 
     public static function getDefaultSMSGateways(): array
@@ -852,7 +846,9 @@ if (!function_exists('payment_gateways')) {
     {
         $paymentGatewayPublishedStatus = config('get_payment_publish_status') ?? 0;
 
-        $paymentGatewaysQuery = Setting::whereIn('settings_type', ['payment_config'])->where('is_active', 1);
+        $paymentGatewaysQuery = Setting::whereIn('settings_type', ['payment_config'])
+            ->where('is_active', 1)
+            ->where('key_name', '!=', 'sandbox');
         if ($paymentGatewayPublishedStatus == 1) {
             $paymentGatewaysList = $paymentGatewaysQuery->get();
         } else {

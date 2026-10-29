@@ -163,6 +163,9 @@
                                         @if ($digital_payment['status'] == 1)
                                             <div class="row gx-4">
                                                 @foreach ($payment_gateways_list as $payment_gateway)
+                                                    @if ($payment_gateway->key_name === 'sandbox')
+                                                        @continue
+                                                    @endif
                                                     @php($additionalData = $payment_gateway['additional_data'] != null ? json_decode($payment_gateway['additional_data']) : [])
                                                         <?php
                                                         $gatewayImgPath = dynamicAsset(path: 'public/assets/back-end/img/modal/payment-methods/' . $payment_gateway->key_name . '.png');

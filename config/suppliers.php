@@ -46,8 +46,8 @@ return [
                 'multiplier' => 2.0,
             ],
 
-            // Testing & Mock Mode (Live by default)
-            'is_mock' => env('FOXRELOAD_IS_MOCK', false),
+            // Testing & Mock Mode (Simulated instant delivery when true, live API when false)
+            'is_mock' => (bool) env('FOXRELOAD_IS_MOCK', true),
 
             // Pricing Rules
             'markup_percent' => env('FOXRELOAD_MARKUP_PERCENT', 7.0),

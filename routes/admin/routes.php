@@ -89,6 +89,7 @@ use App\Http\Controllers\Admin\Payment\OfflinePaymentMethodController;
 use App\Http\Controllers\Admin\Settings\DeliverymanSettingsController;
 use App\Http\Controllers\Admin\Settings\DeliveryRestrictionController;
 use App\Http\Controllers\Admin\Settings\EnvironmentSettingsController;
+use App\Http\Controllers\Admin\Settings\SupplierSettingsController;
 use App\Http\Controllers\Admin\Settings\SocialMediaSettingsController;
 use App\Http\Controllers\Admin\SystemSetup\SystemLoginSetupController;
 use App\Http\Controllers\Admin\ThirdParty\SocialLoginSettingsController;
@@ -763,6 +764,13 @@ Route::group(['prefix' => 'admin', 'as' => 'admin.', 'middleware' => ['admin', '
                 Route::post('environment-update-force-https', 'updateForceHttps')->name('environment-https-setup');
                 Route::post('optimize-system', 'optimizeSystem')->name('optimize-system');
                 Route::post('install-passport', 'installPassport')->name('install-passport');
+            });
+
+            Route::controller(SupplierSettingsController::class)->group(function () {
+                Route::get('supplier-settings', 'index')->name('supplier-settings');
+                Route::post('supplier-settings', 'update');
+                Route::post('supplier-mock-status', 'toggleMockStatus')->name('supplier-mock-status');
+                Route::post('supplier-check-connection', 'checkConnection')->name('supplier-check-connection');
             });
 
             Route::controller(BusinessSettingsController::class)->group(function () {

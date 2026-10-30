@@ -21,7 +21,16 @@ class DigitalOrderService
     public function __construct(?FoxReloadClient $client = null)
     {
         $this->client = $client ?? new FoxReloadClient();
-        $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', false));
+        try {
+            $dbMock = \App\Models\BusinessSetting::where('type', 'foxreload_is_mock')->value('value');
+            if ($dbMock !== null) {
+                $this->isMock = filter_var($dbMock, FILTER_VALIDATE_BOOLEAN);
+            } else {
+                $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', true));
+            }
+        } catch (\Throwable $e) {
+            $this->isMock = (bool) config('suppliers.suppliers.foxreload.is_mock', env('FOXRELOAD_IS_MOCK', true));
+        }
     }
 
     /**
